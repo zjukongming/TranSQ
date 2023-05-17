@@ -15,7 +15,7 @@ sent_emb = 768
 sent_encoder = SentenceTransformer('all-mpnet-base-v2').encode
 
 
-data_dir = "/mnt/vdb1/Data/mimic_cxr/"
+data_dir = "/big-disk/mimic_cxr/"
 threshold = 3
 data_name = "mimic"
 tokenizer = Tokenizer(data_dir, threshold, data_name)
@@ -26,6 +26,7 @@ print("vocab_size", vocab_size)
 def get_info(example):
     image_id = example["id"]
     image_path = example['image_path']
+    a = example['report'].replace("\n"," ")
     sentences = example['report'].replace("\n"," ").split(". ")                     #按句拆分
 
     sent_len = min(max_sent_num-1, len(sentences))                                  #句子数
@@ -76,7 +77,7 @@ def get_info(example):
     return sample
 
 
-ann_path = "/mnt/vdb1/Data/mimic_cxr/annotation.json"
+ann_path = "/big-disk/mimic_cxr/annotation.json"
 ann = json.loads(open(ann_path, 'r').read())
 split_list = ["val", "test", "train"]
 

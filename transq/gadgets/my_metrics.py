@@ -14,7 +14,7 @@ from typing import Any, Callable, Optional, Sequence, Dict, List, Tuple, Union
 
 from torch import Tensor
 from torchmetrics import Metric
-from torchmetrics.functional.text.bleu import _bleu_score_compute, _bleu_score_update
+from torchmetrics.functional.text.bleu import _bleu_score_compute, _bleu_score_update, _tokenize_fn
 from torchmetrics.functional.text.rouge import ALLOWED_ROUGE_KEYS, _rouge_score_compute, _rouge_score_update
 from torchmetrics.utilities.imports import _NLTK_AVAILABLE
 
@@ -290,6 +290,8 @@ class BLEUScore(Metric):
 
     is_differentiable = False
     higher_is_better = True
+    full_state_update= True
+
     trans_len: Tensor
     ref_len: Tensor
     numerator: Tensor
@@ -299,20 +301,22 @@ class BLEUScore(Metric):
         self,
         n_gram: int = 4,
         smooth: bool = False,
-        compute_on_step: bool = True,
-        dist_sync_on_step: bool = False,
-        process_group: Optional[Any] = None,
-        dist_sync_fn: Optional[Callable] = None,
+        weights: Optional[Sequence[float]] = None,
+        #compute_on_step: bool = True,
+        #dist_sync_on_step: bool = False,
+        #process_group: Optional[Any] = None,
+        #dist_sync_fn: Optional[Callable] = None,
     ):
         super().__init__(
-            compute_on_step=compute_on_step,
-            dist_sync_on_step=dist_sync_on_step,
-            process_group=process_group,
-            dist_sync_fn=dist_sync_fn,
+            #compute_on_step=compute_on_step,
+            #dist_sync_on_step=dist_sync_on_step,
+            #process_group=process_group,
+            #dist_sync_fn=dist_sync_fn,
         )
 
         self.n_gram = n_gram
         self.smooth = smooth
+        self.weights = weights if weights is not None else [1.0 / n_gram] * n_gram
 
         self.add_state("trans_len", tensor(0, dtype=torch.float), dist_reduce_fx="sum")
         self.add_state("ref_len", tensor(0, dtype=torch.float), dist_reduce_fx="sum")
@@ -322,29 +326,35 @@ class BLEUScore(Metric):
         self.add_state("add_all", default=tensor(0, dtype=torch.float), dist_reduce_fx="sum")
 
     def update(  # type: ignore
-        self, reference_corpus: Sequence[Sequence[Sequence[str]]], translate_corpus: Sequence[Sequence[str]]
+        self, preds: Sequence[str], target: Sequence[Sequence[str]]
     ) -> None:
         """Compute Precision Scores.
         Args:
-            reference_corpus: An iterable of iterables of reference corpus
-            translate_corpus: An iterable of machine translated corpus
+            preds: An iterable of machine translated corpus
+            target: An iterable of iterables of reference corpus
         """
-        trans_len, ref_len = _bleu_score_update(
-            reference_corpus,
-            translate_corpus,
+        
+
+        self.trans_len, self.ref_len = _bleu_score_update(
+            preds,
+            target,
             self.numerator,
             self.denominator,
             self.trans_len,
             self.ref_len,
             self.n_gram,
+            _tokenize_fn,
         )
 
         curr_score = _bleu_score_compute(
-            trans_len, ref_len, self.numerator, self.denominator, self.n_gram, self.smooth
+            self.trans_len, self.ref_len, self.numerator, self.denominator, self.n_gram, self.weights,self.smooth
         )
+        #print(trans_len)
+        #print(ref_len)
+        #print(curr_score)
         self.total+=1
         self.add_all+=curr_score
-        return curr_score
+        #return curr_score
 
     def compute(self) -> Tensor:
         """Calculate BLEU score.
@@ -352,9 +362,9 @@ class BLEUScore(Metric):
             Tensor with BLEU Score
         """
         #return _bleu_score_compute(
-        #    self.trans_len, self.ref_len, self.numerator, self.denominator, self.n_gram, self.smooth
+        #    self.trans_len, self.ref_len, self.numerator, self.denominator, self.n_gram, 1,self.smooth
         #)
-        #print(self.add_all/self.total)
+        #print("BLEU {} compute".format(self.n_gram),self.add_all, self.total)
         return self.add_all/self.total
 
 class ROUGEScore(Metric):

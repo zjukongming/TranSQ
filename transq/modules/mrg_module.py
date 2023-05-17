@@ -2,13 +2,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
+#import transq.modules.densenet_transformer as vit
 import transq.modules.vision_transformer as vit
 import numpy as np
 import pickle as pkl
 import json
 import mmcv
+import torchvision.models as models
+from einops import rearrange
+import joblib
 
-
+import transq.GPT2.model as gpt_model
+import transq.GPT2.config as gpt_config
 from transformers.models.bert.modeling_bert import BertConfig, BertEmbeddings
 from transq.modules import heads, objectives, mrg_utils
 from scipy.optimize import linear_sum_assignment
@@ -27,7 +32,8 @@ class TransformerSQ(pl.LightningModule):
         self.image_size = config["max_image_len"]
         """
         bert_config = BertConfig(
-            vocab_size=config["vocab_size"],
+            #vocab_size=config["vocab_size"],
+            vocab_size=7863,
             hidden_size=config["hidden_size"],
             num_hidden_layers=config["num_layers"],
             num_attention_heads=config["num_heads"],
@@ -35,7 +41,25 @@ class TransformerSQ(pl.LightningModule):
             max_position_embeddings=config["max_text_len"],
             hidden_dropout_prob=config["drop_rate"],
             attention_probs_dropout_prob=config["drop_rate"],
-        )"""
+        )
+        """
+
+        
+        #self.gpt = gpt_model.MYGPTMODEL(gpt_config.GPT2Config())
+        #self.gpt.load_state_dict(torch.load("best_gpt_model.ckpt"))
+        
+        #a=self.gpt.state_dict()['pred.weight']
+        #print(a)
+        
+        #gpt_state_dict = gpt_ckpt["state_dict"]
+        
+        #b=self.gpt.state_dict()['pred.weight']
+        #print(b)
+
+        self.dataset_name=self.hparams.config["datasets"]
+        #self.fuse = nn.Linear(290,145)
+        #self.avg_fnt = torch.nn.AvgPool2d(kernel_size=7, stride=1, padding=0)
+
         hs = self.hparams.config["hidden_size"] 
         #self.text_embeddings = BertEmbeddings(bert_config)
         #self.text_embeddings.apply(objectives.init_weights)     
@@ -47,7 +71,7 @@ class TransformerSQ(pl.LightningModule):
         self.pos_embeddings_2.apply(objectives.init_weights) 
 
         self.image_type_embedding = nn.Embedding(2, hs)
-        self.image_type_embedding.apply(objectives.init_weights)
+        #self.image_type_embedding.apply(objectives.init_weights)
 
         self.vis_dropout = nn.Dropout(0.1)
 
@@ -64,7 +88,6 @@ class TransformerSQ(pl.LightningModule):
         self.sent_vects = torch.Tensor(self.sentence_vectors/self.sent_vecs_norm)    
         self.sentence_gallery = gallery.sentence_gallery     
 
-                
         self.semantic_query_num = config["semantic_query_num"]
         self.semantic_query = nn.Embedding(self.semantic_query_num, hs)
         self.classification_query = nn.Embedding(self.semantic_query_num, hs)
@@ -109,9 +132,10 @@ class TransformerSQ(pl.LightningModule):
             )
         self.topic_clas2.apply(objectives.init_weights)        
 
-
+        
         if self.hparams.config["load_path"] == "":
             print("pretrained: True")
+            print(self.hparams.config["vit"])
             self.transformer = getattr(vit, self.hparams.config["vit"])(
                 pretrained=True, config=self.hparams.config
             )
@@ -120,7 +144,7 @@ class TransformerSQ(pl.LightningModule):
             self.transformer = getattr(vit, self.hparams.config["vit"])(
                 pretrained=False, config=self.hparams.config
             )
-
+        
         #self.pooler = heads.Pooler(config["hidden_size"])
         #self.pooler.apply(objectives.init_weights)
 
@@ -137,10 +161,8 @@ class TransformerSQ(pl.LightningModule):
             self.mpp_score.apply(objectives.init_weights)
 
         # ===================== Downstream ===================== #
-        if (
-            self.hparams.config["load_path"] != ""
-            and not self.hparams.config["test_only"]
-        ):
+        if (self.hparams.config["load_path"] != "" and not self.hparams.config["test_only"]):
+            print("test_only",self.hparams.config["test_only"])
             print("Load pretrained model from {}".format(self.hparams.config["load_path"]))
             ckpt = torch.load(self.hparams.config["load_path"], map_location="cpu")
             state_dict = ckpt["state_dict"]
@@ -155,39 +177,6 @@ class TransformerSQ(pl.LightningModule):
             
             #self.topic_clas.requires_grad = True
 
-        if self.hparams.config["loss_names"]["vqa"] > 0:
-            vs = self.hparams.config["vqav2_label_size"]
-            self.vqa_classifier = nn.Sequential(
-                nn.Linear(hs, hs * 2),
-                nn.LayerNorm(hs * 2),
-                nn.GELU(),
-                nn.Linear(hs * 2, vs),
-            )
-            self.vqa_classifier.apply(objectives.init_weights)
-
-        if self.hparams.config["loss_names"]["nlvr2"] > 0:
-            self.nlvr2_classifier = nn.Sequential(
-                nn.Linear(hs * 2, hs * 2),
-                nn.LayerNorm(hs * 2),
-                nn.GELU(),
-                nn.Linear(hs * 2, 2),
-            )
-            self.nlvr2_classifier.apply(objectives.init_weights)
-            emb_data = self.token_type_embeddings.weight.data
-            self.token_type_embeddings = nn.Embedding(3, hs)
-            self.token_type_embeddings.apply(objectives.init_weights)
-            self.token_type_embeddings.weight.data[0, :] = emb_data[0, :]
-            self.token_type_embeddings.weight.data[1, :] = emb_data[1, :]
-            self.token_type_embeddings.weight.data[2, :] = emb_data[1, :]
-
-        if self.hparams.config["loss_names"]["irtr"] > 0:
-            self.rank_output = nn.Linear(hs, 1)
-            self.rank_output.weight.data = self.itm_score.fc.weight.data[1:, :]
-            self.rank_output.bias.data = self.itm_score.fc.bias.data[1:]
-            self.margin = 0.2
-            for p in self.itm_score.parameters():
-                p.requires_grad = False
-
         #if self.hparams.config["loss_names"]["mimic"] > 0:
             #vs = self.hparams.config["vqav2_label_size"]
             
@@ -199,8 +188,11 @@ class TransformerSQ(pl.LightningModule):
         # ===================== load downstream (test_only) ======================
 
         if self.hparams.config["load_path"] != "" and self.hparams.config["test_only"]:
+            print("Load Pretrained Model From", self.hparams.config["load_path"])
             ckpt = torch.load(self.hparams.config["load_path"], map_location="cpu")
             state_dict = ckpt["state_dict"]
+            #print(state_dict.keys())
+            #print(self.state_dict().keys())
             self.load_state_dict(state_dict, strict=False)
     
     def matcher(self, sent_feats, topic_preds, sent_embeds, sent_num, prob_mask=False):
@@ -234,58 +226,174 @@ class TransformerSQ(pl.LightningModule):
         src_idx = torch.cat([src for (src, _) in indices])
         return batch_idx, src_idx
 
-    def generate_ret_result(self, sent_feats, text_ids, indices, gt_indices, topic_preds, batch_size, device):
+    def generate_ret_result(self, vis_embeds,sent_feats, semantic_feat,text_ids, indices, gt_indices, topic_preds, batch_size, device):
         batch_indices, src_indices = indices
         gt_batch_indices, gt_src_indices = gt_indices
         sim_set = []
         sent_ret = []
         sent_targ = []
         topic_prob = []
+        retrieval_vec=torch.zeros(batch_size,50, 768)
+        retrieval_sent =torch.zeros(batch_size,1 )
         topic_prob_gt = []
         for i in range(batch_size):
+            sim_s = []
+            retrieval_vector = torch.zeros(50, 768)
             idx = src_indices[(batch_indices==i).nonzero().view(-1)]
             gt_idx = gt_src_indices[(gt_batch_indices==i).nonzero().view(-1)]
             #idx = self.idx_path_search(idx)
             #idx = self.idx_path_search_v2(sent_feats[i], idx, topic_preds[i])
+            #cur_semantic_feat = semantic_feat[i, gt_idx]
             sent_feat_t = sent_feats[i, idx]
+            #gt_sent_feat_t = sent_feats[i, gt_idx]
             topic_pred_t = topic_preds[i, idx].sigmoid().cpu().numpy()
             topic_gt_t = topic_preds[i, gt_idx].sigmoid().cpu().numpy()
             #print(idx)
             #print(sent_feat_t)
             sent_feat_t = F.normalize(sent_feat_t, dim=-1).cpu()
+            #gt_sent_feat_t = F.normalize(gt_sent_feat_t, dim=-1).cpu()
             #print(sent_feat_t.shape)
             sim = sent_feat_t @ self.sent_vects.transpose(1,0)
+            #gt_sim =gt_sent_feat_t @ self.sent_vects.transpose(1,0)
             #print(sim.shape)
+
             max_idx = torch.argmax(sim, dim=1).to(device)
-            #print(max_idx.shape)
-            sim_t=0
+            #gt_max_idx = torch.argmax(gt_sim, dim=1).to(device)
+            #print(gt_max_idx.shape)
+            for j in range(len(max_idx)):
+                retrieval_vector[j,:]=torch.tensor(self.sent_vects[max_idx[j]])
             sent_ret_t=""
+            
             for j in range(len(max_idx)):
                 #print(max_idx[j])
-                sim_t += sim[j][max_idx[j]].cpu().item()
+                sim_s.append(sim[j][max_idx[j]].cpu().item())
                 pred_sent_t = self.sentence_gallery[max_idx[j]]
                 pred_sent_t = pred_sent_t.strip(".")+" ."
                 sent_ret_t = sent_ret_t + pred_sent_t + " "
-            sent_targ_t = self.tokenizer.decode_batch(text_ids[i, :, 1:].int().cpu().numpy())
+            
+            sent_targ_t = self.tokenizer.decode_batch(text_ids[i, :, :].int().cpu().numpy())
             sent_targ_str = ""
-            for j in sent_targ_t:
-                if j!="":
-                    sent_targ_str = sent_targ_str+j+" "
+            for j in range(len(gt_idx)):
+                cur_sent = sent_targ_t[j]
+                if cur_sent!="":
+                    cur_sent = cur_sent.strip()
+                    sent_targ_str = sent_targ_str+cur_sent+" . "
             sent_ret_t = sent_ret_t.strip()
+            
             sent_targ_str = sent_targ_str.strip()
 
             sent_ret_t = self.tokenizer.clean_report_mimic_cxr(sent_ret_t)
             sent_targ_str = self.tokenizer.clean_report_mimic_cxr(sent_targ_str)
+            #print(len(retrieval_vector))
+            retrieval_vec[i,:,:] = retrieval_vector
+            #semantic_feats.append(cur_semantic_feat)
+            sim_set.append(sim_s)
+            sent_ret.append(sent_ret_t)
+            sent_targ.append(sent_targ_str)
+            topic_prob.append(((topic_pred_t, gt_idx), (topic_gt_t, gt_idx)))
+        
+        
+        ret_result = [sent_ret, sent_targ,sim_set, topic_prob,semantic_feat,retrieval_vec,retrieval_sent]
+        return ret_result
+
+    
+    """
+    def generate_ret_result_v2(self, vis_embeds,sent_feats, semantic_feat, text_ids, indices, gt_indices, topic_preds, batch_size, device):
+        batch_indices, src_indices = indices
+        gt_batch_indices, gt_src_indices = gt_indices
+        sim_set = []
+        sent_ret = []
+        sent_targ = []
+        topic_prob = []
+        retrieval_sent=torch.zeros(batch_size,1 )
+        retrieval_vec=torch.zeros(batch_size,50, 768)
+        semantic_feats = []
+        topic_prob_gt = []
+        for i in range(batch_size):
+            sim_s = []
+            idx = src_indices[(batch_indices==i).nonzero().view(-1)]
+            gt_idx = gt_src_indices[(gt_batch_indices==i).nonzero().view(-1)]
+            #idx = self.idx_path_search(idx)
+            #idx = self.idx_path_search_v2(sent_feats[i], idx, topic_preds[i])
+            #cur_semantic_feat = semantic_feat[i, gt_idx]
+            sent_feat_t = sent_feats[i, idx]
+            #gt_sent_feat_t = sent_feats[i, gt_idx]
+            topic_pred_t = topic_preds[i, idx].sigmoid().cpu().numpy()
+            topic_gt_t = topic_preds[i, gt_idx].sigmoid().cpu().numpy()
+
+            semantic_feature = semantic_feat[i, idx]
+
+            #print(idx)
+            #print(sent_feat_t)
+            sent_feat_t = F.normalize(sent_feat_t, dim=-1).cpu()
+            #gt_sent_feat_t = F.normalize(gt_sent_feat_t, dim=-1).cpu()
+            #print(sent_feat_t.shape)
+            sim = sent_feat_t @ self.sent_vects.transpose(1,0)
+            #gt_sim =gt_sent_feat_t @ self.sent_vects.transpose(1,0)
+            #print(sim.shape)
+
+            max_idx = torch.argmax(sim, dim=1).to(device)
+            for j in range(len(max_idx)):
+                sim_s.append(sim[j][max_idx[j]].cpu().item())
+            #gt_max_idx = torch.argmax(gt_sim, dim=1).to(device)
+            #retrieval_vector = torch.zeros(sent_feat_t.size(0), 768)
+            retrieval_vector = torch.zeros(sent_feat_t.size(0), 768)
+            #print(gt_max_idx.shape)
+            for j in range(len(max_idx)):
+                retrieval_vector[j,:]=torch.tensor(self.sent_vects[max_idx[j]])
+
+            #print(semantic_feature.size())
+            #print(retrieval_vector.size())
+            semantic_feature = semantic_feature.to(device)
+            retrieval_vector = retrieval_vector.to(device)
+
+            decode_input = torch.full([sent_feat_t.size(0),1],self.tokenizer.token2idx['</s>']).to(device)
+            result = torch.full([sent_feat_t.size(0),self.text_size],self.tokenizer.token2idx['<pad>']).to(device)
+            for j in range(self.text_size):
+                decode_out = self.gpt(semantic_feature,retrieval_vector,decode_input)
+                next_input = decode_out[:,j:j+1,:]
+                next_input = F.softmax(next_input,dim=2)
+                next_input = next_input.argmax(dim=2)
+                result[:,j:j+1]=next_input
+                decode_input = torch.cat([decode_input, next_input], dim=-1)
+
+            num = len(result)
+            sent_ret_t=""
+            for j in range(num):
+                pred_sent_t = self.tokenizer.decode_txt(result[j].cpu().numpy().tolist())
+                pred_sent_t = pred_sent_t.strip(".")
+                pred_sent_t = self.tokenizer.clean_report_mimic_cxr(pred_sent_t)
+                pred_sent_t = pred_sent_t.strip()
+                sent_ret_t = sent_ret_t + pred_sent_t + " "
+
+            topic_pred_t = topic_preds[i, idx].sigmoid().cpu().numpy()
+            topic_gt_t = topic_preds[i, gt_idx].sigmoid().cpu().numpy()
+
+
+            sent_targ_t = self.tokenizer.decode_batch(text_ids[i, :, :].int().cpu().numpy())
+            sent_targ_str = ""
+            for j in range(len(gt_idx)):
+                cur_sent = sent_targ_t[j]
+                if cur_sent!="":
+                    cur_sent = cur_sent.strip()
+                    sent_targ_str = sent_targ_str+cur_sent+" . "
+            sent_ret_t = sent_ret_t.strip()
             
-            sim_set.append(sim_t/(len(max_idx)+1e-7))
+            sent_targ_str = sent_targ_str.strip()
+
+            sent_ret_t = self.tokenizer.clean_report_mimic_cxr(sent_ret_t)
+            sent_targ_str = self.tokenizer.clean_report_mimic_cxr(sent_targ_str)
+            #retrieval_vec[i,:,:] = retrieval_vector
+            #semantic_feats.append(cur_semantic_feat)
+            sim_set.append(sim_s)
             sent_ret.append(sent_ret_t)
             sent_targ.append(sent_targ_str)
             topic_prob.append(((topic_pred_t, idx), (topic_gt_t, gt_idx)))
-            
-        
-        ret_result = [sent_ret, sent_targ, sim_set, topic_prob]
+        ret_result = [sent_ret, sent_targ,sim_set, topic_prob,semantic_feat,retrieval_vec,retrieval_sent]
         return ret_result
+    """
     
+
     def select_indices_v2(self, sent_feats, indices=None, indices_max=None, batch_size=64, device="cuda:0"):
         batch_set = []
         src_set = []
@@ -417,6 +525,8 @@ class TransformerSQ(pl.LightningModule):
         image_path = batch["path"]
         text_ids = batch["report_ids"].long()
         #text_masks = batch["report_masks"]
+        #img = batch["image"]
+
 
         #image embedding
         if image_embeds is None and image_masks is None:
@@ -433,20 +543,12 @@ class TransformerSQ(pl.LightningModule):
                 max_image_len=self.hparams.config["max_image_len"],
                 mask_it=mask_image,
             )
-            
         else:
             patch_index, image_labels = (
                 None,
                 None,
             )
-        #print(image_embeds.size())
-        """
-        print("image")
-        print("image_embeds",image_embeds.size())
-        print("image_masks",image_masks.size())
-        print("patch_index",patch_index[0].size(), patch_index[1])
-        print("image_labels",image_labels)
-        """
+
         #sentence embedding
         sent_embeds = batch["sent_seq"].float()
         #sent_masks = batch["sent_mask"]
@@ -458,73 +560,35 @@ class TransformerSQ(pl.LightningModule):
         length = torch.max(batch["seq_len"]).cpu().data
 
         #print(sent_embeds.size())
-        #print(length)
 
-        #text_embeds, image_embeds = (
-        #    text_embeds + self.token_type_embeddings(torch.zeros_like()),
-        #    image_embeds
-        #    + self.token_type_embeddings(
-        #        torch.full_like(image_masks, image_token_type_idx)
-        #    ),
-        #)
-        
         #device = sent_embeds.get_device()
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         batch_size, sent_length, feat_dim = sent_embeds.size()
         _, image_length, _ = image_embeds.size()
   
         ## Main      
-        # Step 1: Vision Transformer:
+        # Step 1: Visual Extractor:
         #print("step 1")
-
+        #ViT
         x = image_embeds+pos_embeds
+        
         x = self.vis_dropout(x)
         for i, blk in enumerate(self.transformer.blocks):
             #x, _attn = blk(x+pos_embeds, x+pos_embeds, x) 
             x, _attn = blk(x)
         x = self.transformer.norm(x)    
         vis_embeds = x
-        #topic_preds = self.topic_clas(vis_embeds).unsqueeze(2)
-
-        
-        # Step 2: Sentence Embedding Generation
-        #print("step 2")
-        
         semantic_query = self.semantic_query(torch.arange(self.semantic_query_num).to(device))
         x = semantic_query.repeat(batch_size, 1, 1)
-        #print(x.size())
         for i, blk in enumerate(self.transformer.blocks_topic):
-            #x, _attn = blk(x, (vis_embeds+pos_embeds), (vis_embeds+pos_embeds))  
-            x, _attn = blk(x, (vis_embeds+pos_embeds), (vis_embeds))  
-        
+            x, _attn = blk(x, (vis_embeds+pos_embeds), (vis_embeds))
         x = self.transformer.norm_sent(x)
+
+        semantic_feat = x
+
         sent_feats = self.topic_proj(x).float()
-        
-        #x = self.transformer.norm_sent(x)
-        #sent_feats = self.topic_proj(x).float()
-        
-        #print(sent_feats.shape)
-        #print(vis_embeds[:,0,:].unsqueeze(1).repeat(1,self.semantic_query_num,1).shape)
-        #topic_preds = self.topic_clas(torch.cat([sent_feats, vis_embeds[:,0,:].unsqueeze(1).repeat(1,self.semantic_query_num,1)], dim=2)).squeeze(-1)
-        
-        # Step 3: assignment of sent_feats prediction
-        #topic_preds = self.topic_clas(vis_embeds[:,0,:])        #(bs, 200) 
-
-        #classification_query = self.classification_query(torch.arange(self.semantic_query_num).to(device))
-        #x = classification_query.repeat(batch_size, 1, 1)
-        #x = sent_feats.clone()
-        """
-        for i, blk in enumerate(self.transformer.blocks_cls):
-            #x, _attn = blk(x, (vis_embeds+pos_embeds+type_embeds)[:,1:], (vis_embeds+pos_embeds+type_embeds)[:,1:])  
-            x, _attn = blk(x)  
-
-        x = self.transformer.norm_topic(x)
-        """
         topic_preds = self.topic_clas2(x).squeeze(-1)
-        
 
-        #print(topic_preds.shape)
-        
         match_idxs = self.matcher(sent_feats, topic_preds, sent_embeds, sent_num)
         #print(match_idxs)
         
@@ -551,15 +615,11 @@ class TransformerSQ(pl.LightningModule):
         ret_result=None
         pred_indices = None
         if phase!="train":  
-        
-            #print(topic_preds.size())
-            
             pred_indices = (topic_preds.sigmoid()>0.45).nonzero()
             
             top_k = 6
             top_indices = topic_preds.sigmoid().topk(top_k, dim=1).indices.view(-1)
             top_batches = torch.Tensor(np.arange(batch_size).repeat(top_k)).to(device)
-
             #pred_indices = (pred_indices[:,0], pred_indices[:,1]) 
             pred_indices = (torch.cat([pred_indices[:,0], top_batches], dim=0), torch.cat([pred_indices[:,1], top_indices], dim=0))
             
@@ -567,9 +627,6 @@ class TransformerSQ(pl.LightningModule):
             
             #pred_indices = self.select_indices(sent_feats, batch_size, device)           
             pred_indices = self.select_indices_v2(sent_feats, pred_indices, indices_max, batch_size, device)
-            #print(pred_indices)
-            
-            #pred_indices = indices
 
             neg_count = np.ones(self.semantic_query_num)*batch_size
             pos_count = np.zeros(self.semantic_query_num)
@@ -586,7 +643,7 @@ class TransformerSQ(pl.LightningModule):
                 
             self.test_select_count = self.test_select_count+pos_count
 
-            ret_result = self.generate_ret_result(sent_feats, text_ids, pred_indices, indices, topic_preds, batch_size, device)
+            ret_result = self.generate_ret_result(vis_embeds,sent_feats, semantic_feat, text_ids, pred_indices, indices, topic_preds, batch_size, device)
 
         ret = {
             "ids": image_ids,
@@ -619,34 +676,15 @@ class TransformerSQ(pl.LightningModule):
             ret.update(self.infer(batch))
             return ret
 
-        # Masked Language Modeling
-        if "mlm" in self.current_tasks:
-            ret.update(objectives.compute_mlm(self, batch))
-
-        # Masked Patch Prediction
-        if "mpp" in self.current_tasks:
-            ret.update(objectives.compute_mpp(self, batch))
-
-        # Image Text Matching
-        if "itm" in self.current_tasks:
-            ret.update(objectives.compute_itm_wpa(self, batch))
-
-        # Visual Question Answering
-        if "vqa" in self.current_tasks:
-            ret.update(objectives.compute_vqa(self, batch))
-
-        # Natural Language for Visual Reasoning 2
-        if "nlvr2" in self.current_tasks:
-            ret.update(objectives.compute_nlvr2(self, batch))
-
-        # Image Retrieval and Text Retrieval
-        if "irtr" in self.current_tasks:
-            ret.update(objectives.compute_irtr(self, batch))
-
         if "mimic" in self.current_tasks:
             ret_t, ret_result = objectives.compute_mimic(self, batch)
             ret.update(ret_t) 
-            #print("forward", ret_result[0])           
+            #print("forward", ret_result[0])  
+
+        if "iuxray" in self.current_tasks:
+            ret_t, ret_result = objectives.compute_iuxray(self, batch)
+            ret.update(ret_t) 
+            #print("forward", ret_result[0])          
 
         return ret, ret_result
 
@@ -659,35 +697,37 @@ class TransformerSQ(pl.LightningModule):
         self.path_graph[start, self.semantic_query_num+1]+=1
         #print(self.path_graph.nonzero())
 
-    def save_ret_result(self, ret_result, ids=None, path=None, attn=None, patch=None):
-        #print(path)
-        ret_result_zip = zip(ret_result[0], ret_result[1], ret_result[2], ret_result[3], ret_result[4])
-        for idx, (sent_ret, sent_tar, s, tp, bleu) in enumerate(ret_result_zip):
+    def save_ret_result(self,ret_result, ids=None, path=None, attn=None, patch=None):
+        ret_result_zip = zip(ret_result[0], ret_result[1], ret_result[2], ret_result[3], ret_result[4],ret_result[5],ret_result[6],ret_result[7])
+        for idx, (sent_ret, sent_tar, s, tp,semantic_feat,retrieval_vec,retrieval_sent, bleu) in enumerate(ret_result_zip):
             self.ret_result_file.write("====\n")
             self.ret_result_file.write("pred: {}\n".format(sent_ret))
             self.ret_result_file.write("targ: {}\n".format(sent_tar))
+            #self.ret_result_file.write("vis_embeds: {}\n".format(vis_embeds))
             self.ret_result_file.write("pred prob: {}\n".format(tp[0]))
             self.ret_result_file.write("gt prob: {}\n".format(tp[1]))
             #self.ret_result_file.write("gt prob: {}\n".format(tp))
             self.ret_result_file.write("retrieval sim: {}\n".format(s))
             self.ret_result_file.write("bleu_1:{} bleu_2:{} bleu_3:{} bleu_4:{}\n".format(bleu[0], bleu[1], bleu[2], bleu[3]))
             self.update_topic_path(tp[1][1])
-
             if ids!=None:
                 t_dict = dict()
                 #print(path[0][idx])
                 t_dict["path"]      = path[0][idx]
                 t_dict["pred"]      = sent_ret
                 t_dict["targ"]      = sent_tar
+                #t_dict["vis_embeds"] = vis_embeds.tolist()
                 t_dict["pred_prob"] = tp[0][0].tolist()
                 t_dict["pred_topic"] = tp[0][1].tolist()
                 t_dict["gt_prob"]   = tp[1][0].tolist()
                 t_dict["gt_topic"] = tp[1][1].tolist()
-                t_dict["attn"]      = attn[idx]
-                t_dict["patch"]     = patch[0][idx]          
+                #t_dict["attn"]      = attn[idx].tolist()
+                #t_dict["patch"]     = patch[0][idx].tolist()          
                 t_dict["ret_sim"]   = s
                 t_dict["bleu"]      = [float(bleu[0]), float(bleu[1]), float(bleu[2]), float(bleu[3])] 
                 self.test_log[ids[idx]] = t_dict
+                print(t_dict)
+
 
     def training_step(self, batch, batch_idx):
         mrg_utils.set_task(self)
@@ -710,7 +750,7 @@ class TransformerSQ(pl.LightningModule):
         class_freq["neg_class_freq"] = self.train_select_neg_count
         mmcv.dump(class_freq, "class_freq.pkl")
         mmcv.dump(self.path_graph, "./path_graph.pkl")
-        print("class_freq.pkl updated.")
+        print("class_freqclass_freq.pkl updated.")
         print("path_graph.pkl updated.")
         self.train_select_pos_count = np.zeros(self.semantic_query_num)
         self.train_select_neg_count = np.zeros(self.semantic_query_num)
@@ -748,8 +788,11 @@ class TransformerSQ(pl.LightningModule):
         #print(path)
         attn = output["attn"]
         patch = output["patch"]
+        #sent_feats = output["sent_feats"]
+        #print(ret_result[0])
         self.save_ret_result(ret_result, ids, path, attn, patch)
         #ret = dict()
+        #self.save(ret_result, ids, path, attn, patch)
 
         #if self.hparams.config["loss_names"]["vqa"] > 0:
         #    ret.update(objectives.vqa_test_step(self, batch, output))
@@ -763,10 +806,12 @@ class TransformerSQ(pl.LightningModule):
         mrg_utils.epoch_wrapup(self)
         self.ret_result_file.close()
         mmcv.dump(self.path_graph, "./path_graph.pkl")
-        mmcv.dump(self.test_log, "./ret_logs/test_log.pkl")
-        with open("./ret_logs/test_log.json", 'w') as f:
+        joblib.dump(self.test_log, "./ret_logs/gen/re.pkl")
+        with open("./ret_logs/gen/re.json", 'w') as f:
             json.dump(self.test_log, f)
 
     def configure_optimizers(self):
         return mrg_utils.set_schedule(self)
 
+if __name__=="main":
+    model = TransformerSQ()

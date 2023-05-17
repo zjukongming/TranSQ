@@ -3,7 +3,7 @@ import json
 import mmcv
 import numpy as np
 
-f = open("/mnt/vdb1/Data/mimic_cxr/annotation.json")
+f = open("/big-disk/mimic_cxr/annotation.json")
 ann = json.load(f)
 split_list = ["train", "val", "test"]
 

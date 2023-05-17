@@ -17,6 +17,7 @@ class MTDataModule(LightningDataModule):
 
         self.dm_keys = datamodule_keys
         self.dm_dicts = {key: _datamodules[key](_config) for key in datamodule_keys}
+        #self.dm_dicts = {key: _datamodules[key](_config) for key in datamodule_keys}
         self.dms = [v for k, v in self.dm_dicts.items()]
         self.batch_size = self.dms[0].batch_size
         self.tokenizer = self.dms[0].tokenizer
@@ -73,9 +74,9 @@ class MTDataModule(LightningDataModule):
 
     def test_dataloader(self):
         loader = DataLoader(
-            self.test_dataset,
+            self.val_dataset,
             batch_size=self.batch_size,
-            sampler=self.test_sampler,
+            sampler=self.val_sampler,
             num_workers=self.num_workers,
             #collate_fn=self.collate,
         )

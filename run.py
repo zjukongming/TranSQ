@@ -4,15 +4,18 @@ import torch
 import pytorch_lightning as pl
 #from transq.modules.gallery import Gallery
 from transq.config import ex
-from transq.modules import TransformerSQ
+from transq.modules import TransformerSQ,TransformerSQ_CNN
 from transq.datamodules.multitask_datamodule import MTDataModule
+
+import warnings
 
 
 @ex.automain
 def main(_config):
+    warnings.filterwarnings("ignore", category=UserWarning)
     torch.multiprocessing.set_start_method('spawn', force=True)
     _config = copy.deepcopy(_config)
-    #print(_config)
+    print(_config)
     pl.seed_everything(_config["seed"])
 
     dm = MTDataModule(_config, dist=True)
@@ -20,11 +23,16 @@ def main(_config):
     tokenizer = dm.tokenizer
     vocab_size = dm.vocab_size
  
-    model = TransformerSQ(_config, tokenizer)
+    if _config["backbone"]=="ViT":
+        model = TransformerSQ(_config, tokenizer)
+    elif _config["backbone"]=="CNN":
+        model = TransformerSQ_CNN(_config, tokenizer)
+    #print(model)
     exp_name = f'{_config["exp_name"]}'
 
     os.makedirs(_config["log_dir"], exist_ok=True)
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
+        #dirpath="/fast-disk/kongming/Code/TranSQ/result/",
         save_top_k=1,
         verbose=True,
         monitor="val/the_metric",
@@ -64,7 +72,7 @@ def main(_config):
         max_epochs=_config["max_epoch"] if max_steps is None else 1000,
         max_steps=max_steps,
         callbacks=callbacks,
-        #checkpoint_callback=False,
+        #callbacks=[checkpoint_callback],
         logger=logger,
         prepare_data_per_node=False,
         replace_sampler_ddp=False,

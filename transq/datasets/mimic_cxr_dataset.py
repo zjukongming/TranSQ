@@ -12,7 +12,12 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 from transq.transforms.utils import MinMaxResize
 #from sentence_transformers import SentenceTransformer
-#from .tokenizer import Tokenizer
+from transq.datamodules.tokenizer import Tokenizer
+
+data_dir = "/big-disk/mimic_cxr/"
+threshold = 3
+data_name = "mimic"
+tokenizer = Tokenizer(data_dir, threshold, data_name)
 
 class MIMIC_Dataset(Dataset):
     def __init__(self, *args, **kwargs):
@@ -76,7 +81,7 @@ class MIMIC_Dataset(Dataset):
         sent_len = orig_sent_seq.shape[0]                                               #句子数
         sent_seq[:sent_len,:] = orig_sent_seq
 
-        report_ids_new = np.zeros((self.max_sent_num, self.max_seq_length))
+        report_ids_new = np.full((self.max_sent_num, self.max_seq_length),tokenizer.token2idx['<pad>'])
 
         for idx, r_i in enumerate(report_ids):
             if idx>=self.max_sent_num:
@@ -84,7 +89,7 @@ class MIMIC_Dataset(Dataset):
                 continue
             length = min(len(r_i), self.max_seq_length)
             report_ids_new[idx, :length] = np.array(r_i)[:length]                   #按句保存的token_id
-               
+        
         seq_length = log["seq_len"]
 
         #report_masks = np.zeros((self.max_sent_num, self.max_seq_length))

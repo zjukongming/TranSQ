@@ -4,7 +4,7 @@ sys.path.append("..")
 from transq.modules.gallery import Gallery
 
 
-path = "/mnt/vdb1/Data/mimic_cxr"
+path = "/big-disk/mimic_cxr"
 #save
 sent_gallery = Gallery(path)
 print(len(sent_gallery))

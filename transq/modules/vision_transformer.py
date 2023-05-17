@@ -38,7 +38,7 @@ from timm.models.helpers import load_pretrained
 from timm.models.layers import StdConv2dSame, DropPath, to_2tuple, trunc_normal_
 from timm.models.resnet import resnet26d, resnet50d
 from timm.models.resnetv2 import ResNetV2
-from timm.models.registry import register_model
+from timm.models import register_model
 from torchvision import transforms
 
 from transq.modules import objectives
@@ -795,7 +795,7 @@ class VisionTransformer(nn.Module):
         self.patch_size = patch_size
         self.patch_dim = img_size // patch_size
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches+1, embed_dim))
         self.pos_drop = nn.Dropout(p=drop_rate)
 
         if add_norm_before_transformer:
@@ -965,7 +965,128 @@ class VisionTransformer(nn.Module):
         feats[indices_replaced] = self.mask_token.to(feats)
 
         return feats, labels
+    """
+    def create_1d_absolute_sin_cos_embedding(pos_len, dim):
+        assert dim % 2 == 0, "wrong dimension!"
+        position_emb = torch.zeros(pos_len, dim, dtype=torch.float)
+        # i矩阵
+        i_matrix = torch.arange(dim//2, dtype=torch.float)
+        i_matrix /= dim / 2
+        i_matrix = torch.pow(10000, i_matrix)
+        i_matrix = 1 / i_matrix
+        i_matrix = i_matrix.to(torch.long)
+        # pos矩阵
+        pos_vec = torch.arange(pos_len).to(torch.long)
+        # 矩阵相乘，pos变成列向量，i_matrix变成行向量
+        out = pos_vec[:, None] @ i_matrix[None, :]
+        # 奇/偶数列
+        emb_cos = torch.cos(out)
+        emb_sin = torch.sin(out)
+        # 赋值
+        position_emb[:, 0::2] = emb_sin
+        position_emb[:, 1::2] = emb_cos
+        return position_emb
+    """
+    def create_pos_embed_patch_index(self,x,max_image_len=200, mask_it=False):
+        B, C, H, W = x.shape
+        x_mask = (x.sum(dim=1) != 0).float()[:, None, :, :]
+        x_mask = F.interpolate(x_mask, size=(H, W)).long()
+        x_h = x_mask[:, 0].sum(dim=1)[:, 0]
+        x_w = x_mask[:, 0].sum(dim=2)[:, 0]
+        spatial_pos = (
+            self.pos_embed[:, 1:, :]
+            .transpose(1, 2)
+            .view(1, C, H, W)
+        )
+        pos_embed = torch.cat(
+            [
+                F.pad(
+                    F.interpolate(
+                        spatial_pos, size=(h, w), mode="bilinear", align_corners=True,
+                    ),
+                    (0, W - w, 0, H - h),
+                )
+                for h, w in zip(x_h, x_w)
+            ],
+            dim=0,
+        )
+        
+        pos_embed = pos_embed.flatten(2).transpose(1, 2)
+        x = x.flatten(2).transpose(1, 2)
+        patch_index = (
+            torch.stack(
+                torch.meshgrid(
+                    torch.arange(x_mask.shape[-2]), torch.arange(x_mask.shape[-1])
+                ),
+                dim=-1,
+            )[None, None, :, :, :]
+            .expand(x_mask.shape[0], x_mask.shape[1], -1, -1, -1)
+            .flatten(1, 3)
+        )
+        x_mask = x_mask.flatten(1)
+        if mask_it:
+            label = label[select[:, 0], select[:, 1]].view(B, -1, 3)
 
+        if (max_image_len < 0 or max_image_len is None or not isinstance(max_image_len, int)):
+            eff = x_h * x_w
+            max_image_len = eff.max()
+        else:
+            eff = x_h * x_w
+            max_image_len = min(eff.max(), max_image_len)
+
+        valid_idx = x_mask.nonzero(as_tuple=False)
+        non_valid_idx = (1 - x_mask).nonzero(as_tuple=False)
+        unique_rows = valid_idx[:, 0].unique()
+        valid_row_idx = [valid_idx[valid_idx[:, 0] == u] for u in unique_rows]
+        non_valid_row_idx = [
+            non_valid_idx[non_valid_idx[:, 0] == u] for u in unique_rows
+        ]
+
+        valid_nums = [v.size(0) for v in valid_row_idx]
+        non_valid_nums = [v.size(0) for v in non_valid_row_idx]
+        pad_nums = [max_image_len - v for v in valid_nums]
+
+        select = list()
+        for i, (v, nv, p) in enumerate(zip(valid_nums, non_valid_nums, pad_nums)):
+            if p <= 0:
+                valid_choice = torch.multinomial(torch.ones(v).float(), max_image_len)
+                select.append(valid_row_idx[i][valid_choice])
+            else:
+                pad_choice = torch.multinomial(
+                    torch.ones(nv).float(), p, replacement=True
+                )
+                select.append(
+                    torch.cat(
+                        [valid_row_idx[i], non_valid_row_idx[i][pad_choice]], dim=0,
+                    )
+                )
+
+        select = torch.cat(select, dim=0)
+        x = x[select[:, 0], select[:, 1]].view(B, -1, C)
+        x_mask = x_mask[select[:, 0], select[:, 1]].view(B, -1)
+        patch_index = patch_index[select[:, 0], select[:, 1]].view(B, -1, 2)
+        pos_embed = pos_embed[select[:, 0], select[:, 1]].view(B, -1, C)
+
+        if mask_it:
+            label = label[select[:, 0], select[:, 1]].view(B, -1, 3)
+
+            label[x_mask == 0] = -100
+            label = torch.cat(
+                [torch.full((label.shape[0], 1, 3), -100).to(label), label,], dim=1,
+            )
+
+        cls_tokens = self.cls_token.expand(B, -1, -1)
+        x = torch.cat((cls_tokens, x), dim=1)
+        pos_embed = torch.cat(
+            (self.pos_embed[:, 0, :][:, None, :].expand(B, -1, -1), pos_embed), dim=1
+        )
+
+        if self.add_norm_before_transformer:
+            x = self.pre_norm(x)
+
+        x_mask = torch.cat([torch.ones(x_mask.shape[0], 1).to(x_mask), x_mask], dim=1)
+
+        return x,pos_embed,(patch_index, (H, W))
     def visual_embed(self, _x, max_image_len=200, mask_it=False):
         _, _, ph, pw = self.patch_embed.proj.weight.shape
 
@@ -1084,6 +1205,7 @@ class VisionTransformer(nn.Module):
             return x, pos_embed, x_mask, (patch_index, (H, W)), label
         else:
             return x, pos_embed, x_mask, (patch_index, (H, W)), None
+        
 
     def forward_features(self, _x, max_image_len=144, mask_it=False):
         x, x_mask, patch_index, label = self.visual_embed(
@@ -1322,6 +1444,7 @@ def _create_vision_transformer(variant, pretrained=False, distilled=False, **kwa
     if pretrained:
         load_pretrained(
             model,
+            pretrained_cfg = default_cfg,
             num_classes=num_classes,
             in_chans=kwargs.get("in_chans", 3),
             filter_fn=partial(checkpoint_filter_fn, model=model),

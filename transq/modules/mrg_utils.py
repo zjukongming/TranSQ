@@ -29,6 +29,16 @@ def set_metrics(pl_module):
                 setattr(pl_module, f"{split}_{k}_mrg_score", MRG_Retrieval())
                 setattr(pl_module, f"{split}_{k}_score", MSEScore())
                 #setattr(pl_module, f"{split}_{k}_score", TopicAccuracy())
+            elif k == "iuxray":
+                #print(set_metrics, f"{split}_{k}_score")
+                #setattr(pl_module, f"{split}_{k}_score", MRGScore())
+                setattr(pl_module, f"{split}_{k}_bleu1", BLEUScore(1))
+                setattr(pl_module, f"{split}_{k}_bleu2", BLEUScore(2))
+                setattr(pl_module, f"{split}_{k}_bleu3", BLEUScore(3))
+                setattr(pl_module, f"{split}_{k}_bleu4", BLEUScore(4))
+                setattr(pl_module, f"{split}_{k}_mrg_score", MRG_Retrieval())
+                setattr(pl_module, f"{split}_{k}_score", MSEScore())
+                #setattr(pl_module, f"{split}_{k}_score", TopicAccuracy())
             else:
                 setattr(pl_module, f"{split}_{k}_accuracy", Accuracy())
                 setattr(pl_module, f"{split}_{k}_loss", Scalar())
@@ -90,6 +100,22 @@ def epoch_wrapup(pl_module):
             #    getattr(pl_module, f"{phase}_{loss_name}_loss").compute(),
             #)
             #getattr(pl_module, f"{phase}_{loss_name}_loss").reset()
+        elif loss_name == "iuxray":
+            #print("epoch_wrapup", f"{phase}_{loss_name}_score")
+            print(f"{phase}_{loss_name}_bleu1", getattr(pl_module, f"{phase}_{loss_name}_bleu1").compute())
+            print(f"{phase}_{loss_name}_bleu2", getattr(pl_module, f"{phase}_{loss_name}_bleu2").compute())
+            print(f"{phase}_{loss_name}_bleu3", getattr(pl_module, f"{phase}_{loss_name}_bleu3").compute())
+            print(f"{phase}_{loss_name}_bleu4", getattr(pl_module, f"{phase}_{loss_name}_bleu4").compute())
+            print(f"{phase}_{loss_name}_mrg_score", getattr(pl_module, f"{phase}_{loss_name}_mrg_score").compute())
+            value = getattr(pl_module, f"{phase}_{loss_name}_bleu4").compute()
+            pl_module.log(f"{loss_name}/{phase}/score_epoch", value)
+            print(f"{phase}_{loss_name}_score", value)
+            getattr(pl_module, f"{phase}_{loss_name}_bleu1").reset()
+            getattr(pl_module, f"{phase}_{loss_name}_bleu2").reset()
+            getattr(pl_module, f"{phase}_{loss_name}_bleu3").reset()
+            getattr(pl_module, f"{phase}_{loss_name}_bleu4").reset()
+            getattr(pl_module, f"{phase}_{loss_name}_mrg_score").reset()
+            getattr(pl_module, f"{phase}_{loss_name}_score").reset()
         else:
             value = getattr(pl_module, f"{phase}_{loss_name}_accuracy").compute()
             pl_module.log(f"{loss_name}/{phase}/accuracy_epoch", value)
@@ -121,7 +147,6 @@ def set_task(pl_module):
     ]
     #print("set_task", pl_module.current_tasks)
     return
-
 
 def set_schedule(pl_module):
     lr = pl_module.hparams.config["learning_rate"]

@@ -151,7 +151,7 @@ def csv_analysis(csv_file, cls_seq, sorted_ids):
     return result/count[:,np.newaxis], category_count/idx
                 
 
-pkl_path = "../../ret_logs/test_log.pkl"
+pkl_path = "../../ret_logs/test_re.pkl"
 logs = mmcv.load(pkl_path)
 keys = logs.keys()
 
