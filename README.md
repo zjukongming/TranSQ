@@ -1,16 +1,16 @@
 # TranSQ
 
-MICCAI 22 accepted paper [TranSQ: Transformer-based Semantic Query for Medical Report Generation](https://link.springer.com/chapter/10.1007/978-3-031-16452-1_58) for medical report generation.
+MICCAI 22 accepted paper [TranSQ: Transformer-based Semantic Query for Medical Report Generation](https://link.springer.com/chapter/10.1007/978-3-031-16452-1_58) presents a method for generating medical reports using semantic queries.
 
-## Step 1：Pre-process
+## Step 1: Pre-process
 
-分别运行preprocess文件夹下data_preprocess.py、generate_CE.py和generate_sentence_gallery.py，以得到预处理样本、初始化类别统计和检索句子库。
+Run the following scripts in `./preprocess`: `data_preprocess.py`, `generate_CE.py`, and `generate_sentence_gallery.py` to obtain preprocessed data, semantic query category initialization, and build a sentence retrieval library.
 
-## Step 2：Train
+## Step 2: Train/Evaluation
 
-修改transq/config.py配置文件，运行run.py文件。
+Modify the `transq/config.py` configuration file and run the `run.py` script (refer to `./model/README.md` for obtaining pre-trained models).
 
-## Step 3：Post-process & Evaluate
+## Step 3: Post-process & Evaluate
 
-1、使用训练得到的模型，测试训练集，为统计语义向量平均位置提供数据；
-2、运行evaluation/NLG_eval/test_from_json.py文件，以计算训练集结果中提及语句的平均位置顺序，并对测试集结果进行重排序，计算最终指标。
+1. Test the trained model on the training set to gather data for averaging the positional order of semantic vectors.
+2. Run the `evaluation/NLG_eval/test_from_json.py` script to calculate the average positional order of mentioned sentences in the training set results. Perform re-ranking of the test set results and compute the final metrics.
