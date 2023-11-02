@@ -4,7 +4,7 @@ Taking the mimic dataset as an example, the **directory** description is as foll
 
 mimic
 
-\ \ ├─ annotation.json
+  ├─ annotation.json
   
   └─ images
   
