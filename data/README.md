@@ -2,10 +2,10 @@
 
 Taking the mimic dataset as an example, the **directory** description is as follows: 
 
-'
-├──mimic
-├──annotation.json
-​   └── images
+```
+mimic
+|   ├── annotation.json
+​|   └── images
 ​			├─ P10
 ​					├─ p100000XX
 ​							└─ s5025XXXX
@@ -18,7 +18,7 @@ Taking the mimic dataset as an example, the **directory** description is as foll
 ​			├─ p11
 ​			├─  ......
 ​			└─  p19
-'
+```
 
 Among them, the "annotation.json" file stores a dictionary composed of three parts: "train", "val", and "test". The values are in the form of a list, and each dictionary in the list corresponds to a data sample.
 
