@@ -13,4 +13,6 @@ Modify the `transq/config.py` configuration file and run the `run.py` script (re
 ## Step 3: Post-process & Evaluate
 
 1. Test the trained model on the training set to gather data for averaging the positional order of semantic vectors.
-2. Run the `evaluation/NLG_eval/test_from_json.py` script to calculate the average positional order of mentioned sentences in the training set results. Perform re-ranking of the test set results and compute the final metrics.
+2. Run the `evaluation/NLG_eval/test_from_json.py` script to calculate the average positional order of the mentioned sentences in the training set results. Perform a re-ranking of the test set results and compute the final metrics.
+
+Note: Since there are slight differences between IU X-ray and MIMIC-CXR (different image numbers), we implemented the two datasets with two separate projects for convenience, and the main branch is for MIMIC-CXR.
