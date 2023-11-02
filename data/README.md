@@ -2,12 +2,10 @@
 
 Taking the mimic dataset as an example, the **directory** description is as follows: 
 
-mimic
+-mimic
 
-  ├─ annotation.json
-  
-  └─ images
-  
+  ├─ annotation.json 
+  |_ images
       ├─ P10
           ├─ p100000XX
 ​               └─ s5025XXXX
