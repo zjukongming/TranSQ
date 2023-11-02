@@ -10,9 +10,9 @@ Run the following scripts in `./preprocess`: `data_preprocess.py`, `generate_CE.
 
 Modify the `transq/config.py` configuration file and run the `run.py` script (refer to `./model/README.md` for obtaining pre-trained models). For example:
 
-'''
+```
 python run.py with train_mimic_vit
-'''
+```
 
 ## Step 3: Post-process & Evaluate
 
