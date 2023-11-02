@@ -29,7 +29,7 @@ If you have any problem, please feel free to contact me at zjukongming@zju.edu.c
 
 # Citation
 If you use any part of this code and pre-trained weights for your own purpose, please cite our paper.
-'''
+```
 @article{GAO2024102982,
 title = {Simulating doctors’ thinking logic for chest X-ray report generation via Transformer-based Semantic Query learning},
 journal = {Medical Image Analysis},
@@ -42,11 +42,11 @@ url = {https://www.sciencedirect.com/science/article/pii/S1361841523002426},
 author = {Danyang Gao and Ming Kong and Yongrui Zhao and Jing Huang and Zhengxing Huang and Kun Kuang and Fei Wu and Qiang Zhu},
 keywords = {Medical report generation, Semantic query, Transformer, Computer-aided diagnosis, Deep learning}
 }
-'''
+```
 
 or
 
-'''
+```
 @InProceedings{10.1007/978-3-031-16452-1_58,
 author="Kong, Ming
 and Huang, Zhengxing
@@ -65,4 +65,4 @@ publisher="Springer Nature Switzerland",
 address="Cham",
 pages="610--620"
 }
-'''
+```
