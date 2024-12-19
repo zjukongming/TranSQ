@@ -2,6 +2,21 @@ from sacred import Experiment
 
 ex = Experiment("TranSQ")
 
+def _loss_names(d):
+    ret = {
+        "itm": 0,
+        "mlm": 0,
+        "mpp": 0,
+        "vqa": 0,
+        "nlvr2": 0,
+        "irtr": 0,
+        "mimic": 0,
+    }
+
+    ret.update(d)
+    return ret
+
+
 @ex.config
 def config():
     exp_name = "vilt"
