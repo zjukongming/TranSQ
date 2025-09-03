@@ -33,7 +33,7 @@ class ResampleLoss(nn.Module):
                  ),
                  reweight_func=None,  # None, 'inv', 'sqrt_inv', 'rebalance', 'CB'
                  weight_norm=None, # None, 'by_instance', 'by_batch'
-                 freq_file='./class_freq.pkl'):
+                 freq_file='./iuxray_class_freq.pkl'):
         super(ResampleLoss, self).__init__()
 
         assert (use_sigmoid is True) or (partial is False)

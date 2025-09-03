@@ -44,10 +44,10 @@ def makedir(dir):
     if not os.path.exists(dir):
         os.mkdir(dir)
 
-data = mmcv.load("./ret_logs/visual/test_result.pkl")
+data = mmcv.load("./ret_logs/test_log.pkl")
 keys = data.keys()
 
-image_path = "/big-disk/mimic_cxr/images" 
+image_path = "/mnt/vdb1/Data/mimic_cxr/images" 
 output_path = "./visualization"
 makedir(output_path)
 for k in keys:
@@ -66,10 +66,9 @@ for k in keys:
     makedir(path)
 
     image = io.imread(os.path.join(image_path, t_data["path"]))
-    #attn = torch.tensor(t_data["attn"])
     
-    patch = torch.tensor(t_data["patch"])
-    attn = torch.tensor(t_data["attn"])[:,:,1:].mean(axis=0)
+    patch = t_data["patch"]
+    attn = t_data["attn"][:,:,1:].mean(axis=0)
     #print(attn1.shape)
     #print(attn2.shape)
 
