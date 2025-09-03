@@ -2,7 +2,7 @@ import mmcv
 import json
 import csv
 
-fname = "./ret_logs/base/train.json"
+fname = "./ret_logs/test_log_v28_train.json"
 with open(fname, "r") as f:
     dct = json.load(f)
 
