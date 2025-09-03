@@ -74,9 +74,9 @@ class MTDataModule(LightningDataModule):
 
     def test_dataloader(self):
         loader = DataLoader(
-            self.val_dataset,
+            self.train_dataset,
             batch_size=self.batch_size,
-            sampler=self.val_sampler,
+            sampler=self.train_sampler,
             num_workers=self.num_workers,
             #collate_fn=self.collate,
         )

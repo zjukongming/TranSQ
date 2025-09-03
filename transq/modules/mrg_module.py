@@ -10,10 +10,8 @@ import json
 import mmcv
 import torchvision.models as models
 from einops import rearrange
-import joblib
 
-import transq.GPT2.model as gpt_model
-import transq.GPT2.config as gpt_config
+
 from transformers.models.bert.modeling_bert import BertConfig, BertEmbeddings
 from transq.modules import heads, objectives, mrg_utils
 from scipy.optimize import linear_sum_assignment
@@ -43,19 +41,6 @@ class TransformerSQ(pl.LightningModule):
             attention_probs_dropout_prob=config["drop_rate"],
         )
         """
-
-        
-        #self.gpt = gpt_model.MYGPTMODEL(gpt_config.GPT2Config())
-        #self.gpt.load_state_dict(torch.load("best_gpt_model.ckpt"))
-        
-        #a=self.gpt.state_dict()['pred.weight']
-        #print(a)
-        
-        #gpt_state_dict = gpt_ckpt["state_dict"]
-        
-        #b=self.gpt.state_dict()['pred.weight']
-        #print(b)
-
         self.dataset_name=self.hparams.config["datasets"]
         #self.fuse = nn.Linear(290,145)
         #self.avg_fnt = torch.nn.AvgPool2d(kernel_size=7, stride=1, padding=0)
@@ -75,7 +60,7 @@ class TransformerSQ(pl.LightningModule):
 
         self.vis_dropout = nn.Dropout(0.1)
 
-        f = open("./preprocess/data/sentence_gallery.pkl", "rb")
+        f = open("./preprocess/data/iuxray_sentence_gallery.pkl", "rb")
         #self.gallery = Gallery()
         gallery = pkl.load(f)
         self.sentence_vectors = gallery.sentence_vectors
@@ -191,8 +176,8 @@ class TransformerSQ(pl.LightningModule):
             print("Load Pretrained Model From", self.hparams.config["load_path"])
             ckpt = torch.load(self.hparams.config["load_path"], map_location="cpu")
             state_dict = ckpt["state_dict"]
-            #print(state_dict.keys())
-            #print(self.state_dict().keys())
+            print(state_dict.keys())
+            print(self.state_dict().keys())
             self.load_state_dict(state_dict, strict=False)
     
     def matcher(self, sent_feats, topic_preds, sent_embeds, sent_num, prob_mask=False):
@@ -226,174 +211,58 @@ class TransformerSQ(pl.LightningModule):
         src_idx = torch.cat([src for (src, _) in indices])
         return batch_idx, src_idx
 
-    def generate_ret_result(self, vis_embeds,sent_feats, semantic_feat,text_ids, indices, gt_indices, topic_preds, batch_size, device):
+    def generate_ret_result(self, sent_feats, text_ids, indices, gt_indices, topic_preds, batch_size, device):
         batch_indices, src_indices = indices
         gt_batch_indices, gt_src_indices = gt_indices
         sim_set = []
         sent_ret = []
         sent_targ = []
         topic_prob = []
-        retrieval_vec=torch.zeros(batch_size,50, 768)
-        retrieval_sent =torch.zeros(batch_size,1 )
         topic_prob_gt = []
         for i in range(batch_size):
-            sim_s = []
-            retrieval_vector = torch.zeros(50, 768)
             idx = src_indices[(batch_indices==i).nonzero().view(-1)]
             gt_idx = gt_src_indices[(gt_batch_indices==i).nonzero().view(-1)]
             #idx = self.idx_path_search(idx)
             #idx = self.idx_path_search_v2(sent_feats[i], idx, topic_preds[i])
-            #cur_semantic_feat = semantic_feat[i, gt_idx]
             sent_feat_t = sent_feats[i, idx]
-            #gt_sent_feat_t = sent_feats[i, gt_idx]
             topic_pred_t = topic_preds[i, idx].sigmoid().cpu().numpy()
             topic_gt_t = topic_preds[i, gt_idx].sigmoid().cpu().numpy()
             #print(idx)
             #print(sent_feat_t)
             sent_feat_t = F.normalize(sent_feat_t, dim=-1).cpu()
-            #gt_sent_feat_t = F.normalize(gt_sent_feat_t, dim=-1).cpu()
             #print(sent_feat_t.shape)
             sim = sent_feat_t @ self.sent_vects.transpose(1,0)
-            #gt_sim =gt_sent_feat_t @ self.sent_vects.transpose(1,0)
             #print(sim.shape)
-
             max_idx = torch.argmax(sim, dim=1).to(device)
-            #gt_max_idx = torch.argmax(gt_sim, dim=1).to(device)
-            #print(gt_max_idx.shape)
-            for j in range(len(max_idx)):
-                retrieval_vector[j,:]=torch.tensor(self.sent_vects[max_idx[j]])
+            #print(max_idx.shape)
+            sim_t=0
             sent_ret_t=""
-            
             for j in range(len(max_idx)):
                 #print(max_idx[j])
-                sim_s.append(sim[j][max_idx[j]].cpu().item())
+                sim_t += sim[j][max_idx[j]].cpu().item()
                 pred_sent_t = self.sentence_gallery[max_idx[j]]
                 pred_sent_t = pred_sent_t.strip(".")+" ."
                 sent_ret_t = sent_ret_t + pred_sent_t + " "
-            
-            sent_targ_t = self.tokenizer.decode_batch(text_ids[i, :, :].int().cpu().numpy())
+            sent_targ_t = self.tokenizer.decode_batch(text_ids[i, :, 1:].int().cpu().numpy())
             sent_targ_str = ""
-            for j in range(len(gt_idx)):
-                cur_sent = sent_targ_t[j]
-                if cur_sent!="":
-                    cur_sent = cur_sent.strip()
-                    sent_targ_str = sent_targ_str+cur_sent+" . "
+            for j in sent_targ_t:
+                if j!="":
+                    sent_targ_str = sent_targ_str+j+" "
             sent_ret_t = sent_ret_t.strip()
-            
             sent_targ_str = sent_targ_str.strip()
 
-            sent_ret_t = self.tokenizer.clean_report_mimic_cxr(sent_ret_t)
-            sent_targ_str = self.tokenizer.clean_report_mimic_cxr(sent_targ_str)
-            #print(len(retrieval_vector))
-            retrieval_vec[i,:,:] = retrieval_vector
-            #semantic_feats.append(cur_semantic_feat)
-            sim_set.append(sim_s)
-            sent_ret.append(sent_ret_t)
-            sent_targ.append(sent_targ_str)
-            topic_prob.append(((topic_pred_t, gt_idx), (topic_gt_t, gt_idx)))
-        
-        
-        ret_result = [sent_ret, sent_targ,sim_set, topic_prob,semantic_feat,retrieval_vec,retrieval_sent]
-        return ret_result
-
-    
-    """
-    def generate_ret_result_v2(self, vis_embeds,sent_feats, semantic_feat, text_ids, indices, gt_indices, topic_preds, batch_size, device):
-        batch_indices, src_indices = indices
-        gt_batch_indices, gt_src_indices = gt_indices
-        sim_set = []
-        sent_ret = []
-        sent_targ = []
-        topic_prob = []
-        retrieval_sent=torch.zeros(batch_size,1 )
-        retrieval_vec=torch.zeros(batch_size,50, 768)
-        semantic_feats = []
-        topic_prob_gt = []
-        for i in range(batch_size):
-            sim_s = []
-            idx = src_indices[(batch_indices==i).nonzero().view(-1)]
-            gt_idx = gt_src_indices[(gt_batch_indices==i).nonzero().view(-1)]
-            #idx = self.idx_path_search(idx)
-            #idx = self.idx_path_search_v2(sent_feats[i], idx, topic_preds[i])
-            #cur_semantic_feat = semantic_feat[i, gt_idx]
-            sent_feat_t = sent_feats[i, idx]
-            #gt_sent_feat_t = sent_feats[i, gt_idx]
-            topic_pred_t = topic_preds[i, idx].sigmoid().cpu().numpy()
-            topic_gt_t = topic_preds[i, gt_idx].sigmoid().cpu().numpy()
-
-            semantic_feature = semantic_feat[i, idx]
-
-            #print(idx)
-            #print(sent_feat_t)
-            sent_feat_t = F.normalize(sent_feat_t, dim=-1).cpu()
-            #gt_sent_feat_t = F.normalize(gt_sent_feat_t, dim=-1).cpu()
-            #print(sent_feat_t.shape)
-            sim = sent_feat_t @ self.sent_vects.transpose(1,0)
-            #gt_sim =gt_sent_feat_t @ self.sent_vects.transpose(1,0)
-            #print(sim.shape)
-
-            max_idx = torch.argmax(sim, dim=1).to(device)
-            for j in range(len(max_idx)):
-                sim_s.append(sim[j][max_idx[j]].cpu().item())
-            #gt_max_idx = torch.argmax(gt_sim, dim=1).to(device)
-            #retrieval_vector = torch.zeros(sent_feat_t.size(0), 768)
-            retrieval_vector = torch.zeros(sent_feat_t.size(0), 768)
-            #print(gt_max_idx.shape)
-            for j in range(len(max_idx)):
-                retrieval_vector[j,:]=torch.tensor(self.sent_vects[max_idx[j]])
-
-            #print(semantic_feature.size())
-            #print(retrieval_vector.size())
-            semantic_feature = semantic_feature.to(device)
-            retrieval_vector = retrieval_vector.to(device)
-
-            decode_input = torch.full([sent_feat_t.size(0),1],self.tokenizer.token2idx['</s>']).to(device)
-            result = torch.full([sent_feat_t.size(0),self.text_size],self.tokenizer.token2idx['<pad>']).to(device)
-            for j in range(self.text_size):
-                decode_out = self.gpt(semantic_feature,retrieval_vector,decode_input)
-                next_input = decode_out[:,j:j+1,:]
-                next_input = F.softmax(next_input,dim=2)
-                next_input = next_input.argmax(dim=2)
-                result[:,j:j+1]=next_input
-                decode_input = torch.cat([decode_input, next_input], dim=-1)
-
-            num = len(result)
-            sent_ret_t=""
-            for j in range(num):
-                pred_sent_t = self.tokenizer.decode_txt(result[j].cpu().numpy().tolist())
-                pred_sent_t = pred_sent_t.strip(".")
-                pred_sent_t = self.tokenizer.clean_report_mimic_cxr(pred_sent_t)
-                pred_sent_t = pred_sent_t.strip()
-                sent_ret_t = sent_ret_t + pred_sent_t + " "
-
-            topic_pred_t = topic_preds[i, idx].sigmoid().cpu().numpy()
-            topic_gt_t = topic_preds[i, gt_idx].sigmoid().cpu().numpy()
-
-
-            sent_targ_t = self.tokenizer.decode_batch(text_ids[i, :, :].int().cpu().numpy())
-            sent_targ_str = ""
-            for j in range(len(gt_idx)):
-                cur_sent = sent_targ_t[j]
-                if cur_sent!="":
-                    cur_sent = cur_sent.strip()
-                    sent_targ_str = sent_targ_str+cur_sent+" . "
-            sent_ret_t = sent_ret_t.strip()
+            sent_ret_t = self.tokenizer.clean_report_iu_xray(sent_ret_t)
+            sent_targ_str = self.tokenizer.clean_report_iu_xray(sent_targ_str)
             
-            sent_targ_str = sent_targ_str.strip()
-
-            sent_ret_t = self.tokenizer.clean_report_mimic_cxr(sent_ret_t)
-            sent_targ_str = self.tokenizer.clean_report_mimic_cxr(sent_targ_str)
-            #retrieval_vec[i,:,:] = retrieval_vector
-            #semantic_feats.append(cur_semantic_feat)
-            sim_set.append(sim_s)
+            sim_set.append(sim_t/(len(max_idx)+1e-7))
             sent_ret.append(sent_ret_t)
             sent_targ.append(sent_targ_str)
             topic_prob.append(((topic_pred_t, idx), (topic_gt_t, gt_idx)))
-        ret_result = [sent_ret, sent_targ,sim_set, topic_prob,semantic_feat,retrieval_vec,retrieval_sent]
+            
+        
+        ret_result = [sent_ret, sent_targ, sim_set, topic_prob]
         return ret_result
-    """
     
-
     def select_indices_v2(self, sent_feats, indices=None, indices_max=None, batch_size=64, device="cuda:0"):
         batch_set = []
         src_set = []
@@ -527,28 +396,41 @@ class TransformerSQ(pl.LightningModule):
         #text_masks = batch["report_masks"]
         #img = batch["image"]
 
-
         #image embedding
         if image_embeds is None and image_masks is None:
-            img = batch["image"]
+            image1=batch["image"][:, 0]
+            image2=batch["image"][:, 1]
             #print(img.size())
             (
-                image_embeds,
-                pos_embeds,
+                image1_embeds,
+                pos1_embeds,
                 image_masks,
                 patch_index,
-                image_labels,
+                image1_labels,
             ) = self.transformer.visual_embed(
-                img,
+                image1,
+                max_image_len=self.hparams.config["max_image_len"],
+                mask_it=mask_image,
+            )
+            (
+                image2_embeds,
+                pos2_embeds,
+                image_masks,
+                patch_index,
+                image2_labels,
+            ) = self.transformer.visual_embed(
+                image2,
                 max_image_len=self.hparams.config["max_image_len"],
                 mask_it=mask_image,
             )
         else:
-            patch_index, image_labels = (
+            patch1_index, image1_labels,patch2_index,image2_labels = (
+                None,
+                None,
                 None,
                 None,
             )
-
+            
         #sentence embedding
         sent_embeds = batch["sent_seq"].float()
         #sent_masks = batch["sent_mask"]
@@ -560,17 +442,30 @@ class TransformerSQ(pl.LightningModule):
         length = torch.max(batch["seq_len"]).cpu().data
 
         #print(sent_embeds.size())
+        #print(length)
 
         #device = sent_embeds.get_device()
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         batch_size, sent_length, feat_dim = sent_embeds.size()
-        _, image_length, _ = image_embeds.size()
+        _, image_length, _ = image1_embeds.size()
   
         ## Main      
         # Step 1: Visual Extractor:
         #print("step 1")
         #ViT
-        x = image_embeds+pos_embeds
+
+        image1_embeds = image1_embeds+pos1_embeds
+        image2_embeds = image2_embeds+pos2_embeds
+        image1_embeds, image2_embeds = (
+            image1_embeds + self.image_type_embedding(torch.zeros_like(image_masks)),
+            image2_embeds
+            + self.image_type_embedding(
+                torch.full_like(image_masks, image_token_type_idx)
+            ),
+        )
+        x=torch.cat((image1_embeds, image2_embeds), dim=1)
+        pos_embeds=torch.cat((pos1_embeds, pos2_embeds), dim=1)
+
         
         x = self.vis_dropout(x)
         for i, blk in enumerate(self.transformer.blocks):
@@ -584,11 +479,11 @@ class TransformerSQ(pl.LightningModule):
             x, _attn = blk(x, (vis_embeds+pos_embeds), (vis_embeds))
         x = self.transformer.norm_sent(x)
 
-        semantic_feat = x
-
+        
         sent_feats = self.topic_proj(x).float()
         topic_preds = self.topic_clas2(x).squeeze(-1)
 
+        
         match_idxs = self.matcher(sent_feats, topic_preds, sent_embeds, sent_num)
         #print(match_idxs)
         
@@ -617,7 +512,7 @@ class TransformerSQ(pl.LightningModule):
         if phase!="train":  
             pred_indices = (topic_preds.sigmoid()>0.45).nonzero()
             
-            top_k = 6
+            top_k = 5
             top_indices = topic_preds.sigmoid().topk(top_k, dim=1).indices.view(-1)
             top_batches = torch.Tensor(np.arange(batch_size).repeat(top_k)).to(device)
             #pred_indices = (pred_indices[:,0], pred_indices[:,1]) 
@@ -643,7 +538,7 @@ class TransformerSQ(pl.LightningModule):
                 
             self.test_select_count = self.test_select_count+pos_count
 
-            ret_result = self.generate_ret_result(vis_embeds,sent_feats, semantic_feat, text_ids, pred_indices, indices, topic_preds, batch_size, device)
+            ret_result = self.generate_ret_result(sent_feats, text_ids, pred_indices, indices, topic_preds, batch_size, device)
 
         ret = {
             "ids": image_ids,
@@ -697,26 +592,26 @@ class TransformerSQ(pl.LightningModule):
         self.path_graph[start, self.semantic_query_num+1]+=1
         #print(self.path_graph.nonzero())
 
-    def save_ret_result(self,ret_result, ids=None, path=None, attn=None, patch=None):
-        ret_result_zip = zip(ret_result[0], ret_result[1], ret_result[2], ret_result[3], ret_result[4],ret_result[5],ret_result[6],ret_result[7])
-        for idx, (sent_ret, sent_tar, s, tp,semantic_feat,retrieval_vec,retrieval_sent, bleu) in enumerate(ret_result_zip):
+    def save_ret_result(self, ret_result, ids=None, path=None, attn=None, patch=None):
+        #print(path)
+        ret_result_zip = zip(ret_result[0], ret_result[1], ret_result[2], ret_result[3], ret_result[4])
+        for idx, (sent_ret, sent_tar, s, tp, bleu) in enumerate(ret_result_zip):
             self.ret_result_file.write("====\n")
             self.ret_result_file.write("pred: {}\n".format(sent_ret))
             self.ret_result_file.write("targ: {}\n".format(sent_tar))
-            #self.ret_result_file.write("vis_embeds: {}\n".format(vis_embeds))
             self.ret_result_file.write("pred prob: {}\n".format(tp[0]))
             self.ret_result_file.write("gt prob: {}\n".format(tp[1]))
             #self.ret_result_file.write("gt prob: {}\n".format(tp))
             self.ret_result_file.write("retrieval sim: {}\n".format(s))
             self.ret_result_file.write("bleu_1:{} bleu_2:{} bleu_3:{} bleu_4:{}\n".format(bleu[0], bleu[1], bleu[2], bleu[3]))
             self.update_topic_path(tp[1][1])
+
             if ids!=None:
                 t_dict = dict()
                 #print(path[0][idx])
                 t_dict["path"]      = path[0][idx]
                 t_dict["pred"]      = sent_ret
                 t_dict["targ"]      = sent_tar
-                #t_dict["vis_embeds"] = vis_embeds.tolist()
                 t_dict["pred_prob"] = tp[0][0].tolist()
                 t_dict["pred_topic"] = tp[0][1].tolist()
                 t_dict["gt_prob"]   = tp[1][0].tolist()
@@ -727,7 +622,6 @@ class TransformerSQ(pl.LightningModule):
                 t_dict["bleu"]      = [float(bleu[0]), float(bleu[1]), float(bleu[2]), float(bleu[3])] 
                 self.test_log[ids[idx]] = t_dict
                 print(t_dict)
-
 
     def training_step(self, batch, batch_idx):
         mrg_utils.set_task(self)
@@ -748,9 +642,9 @@ class TransformerSQ(pl.LightningModule):
         class_freq = dict()
         class_freq["class_freq"] = self.train_select_pos_count
         class_freq["neg_class_freq"] = self.train_select_neg_count
-        mmcv.dump(class_freq, "class_freq.pkl")
+        mmcv.dump(class_freq, "iuxray_class_freq.pkl")
         mmcv.dump(self.path_graph, "./path_graph.pkl")
-        print("class_freqclass_freq.pkl updated.")
+        print("iuxray_class_freqclass_freq.pkl updated.")
         print("path_graph.pkl updated.")
         self.train_select_pos_count = np.zeros(self.semantic_query_num)
         self.train_select_neg_count = np.zeros(self.semantic_query_num)
@@ -760,6 +654,7 @@ class TransformerSQ(pl.LightningModule):
         #print("validation_step")
         mrg_utils.set_task(self)
         output, ret_result = self(batch)
+        #print(ret_result)
         self.save_ret_result(ret_result)
 
     def validation_epoch_end(self, outs):
@@ -779,6 +674,39 @@ class TransformerSQ(pl.LightningModule):
 
 
 
+    def save(self, ret_result, ids=None, path=None, attn=None, patch=None):
+        ret_result_zip = zip(ret_result[0], ret_result[1], ret_result[2], ret_result[3], ret_result[4])
+        for idx, (sent_ret, sent_tar, s, tp, bleu) in enumerate(ret_result_zip):
+            self.ret_result_file.write("====\n")
+            self.ret_result_file.write("pred: {}\n".format(sent_ret))
+            self.ret_result_file.write("targ: {}\n".format(sent_tar))
+            self.ret_result_file.write("pred prob: {}\n".format(tp[0]))
+            self.ret_result_file.write("gt prob: {}\n".format(tp[1]))
+            #self.ret_result_file.write("gt prob: {}\n".format(tp))
+            self.ret_result_file.write("retrieval sim: {}\n".format(s))
+            self.ret_result_file.write("bleu_1:{} bleu_2:{} bleu_3:{} bleu_4:{}\n".format(bleu[0], bleu[1], bleu[2], bleu[3]))
+            self.update_topic_path(tp[1][1])
+            test_log = dict()
+            if ids!=None:
+                t_dict = dict()
+                #print(path[0][idx])
+                t_dict["path"]      = path[0][idx]
+                t_dict["pred"]      = sent_ret
+                t_dict["targ"]      = sent_tar
+                t_dict["pred_prob"] = tp[0][0].tolist()
+                t_dict["pred_topic"] = tp[0][1].tolist()
+                t_dict["gt_prob"]   = tp[1][0].tolist()
+                t_dict["gt_topic"] = tp[1][1].tolist()
+                #t_dict["attn"]      = attn[idx].tolist()
+                #t_dict["patch"]     = patch[0][idx].tolist()          
+                t_dict["ret_sim"]   = s
+                t_dict["bleu"]      = [float(bleu[0]), float(bleu[1]), float(bleu[2]), float(bleu[3])] 
+                test_log[ids[idx]] = t_dict
+                print(test_log)
+                name = "./ret_logs/test/test_log_{}.json".format(ids[idx])
+                with open(name, 'w') as f:
+                    json.dump(t_dict, f)
+
     def test_step(self, batch, batch_idx):
         #print("test_step")
         mrg_utils.set_task(self)
@@ -788,11 +716,10 @@ class TransformerSQ(pl.LightningModule):
         #print(path)
         attn = output["attn"]
         patch = output["patch"]
-        #sent_feats = output["sent_feats"]
-        #print(ret_result[0])
+        print(ids[0])
         self.save_ret_result(ret_result, ids, path, attn, patch)
         #ret = dict()
-        #self.save(ret_result, ids, path, attn, patch)
+        self.save(ret_result, ids, path, attn, patch)
 
         #if self.hparams.config["loss_names"]["vqa"] > 0:
         #    ret.update(objectives.vqa_test_step(self, batch, output))
@@ -805,10 +732,10 @@ class TransformerSQ(pl.LightningModule):
         #    objectives.vqa_test_wrapup(outs, model_name)
         mrg_utils.epoch_wrapup(self)
         self.ret_result_file.close()
-        mmcv.dump(self.path_graph, "./path_graph.pkl")
-        joblib.dump(self.test_log, "./ret_logs/gen/re.pkl")
-        with open("./ret_logs/gen/re.json", 'w') as f:
-            json.dump(self.test_log, f)
+        #mmcv.dump(self.path_graph, "./path_graph.pkl")
+        #mmcv.dump(self.test_log, "./ret_logs/test_log.pkl")
+        #with open("./ret_logs/test_log.json", 'w') as f:
+            #json.dump(self.test_log, f)
 
     def configure_optimizers(self):
         return mrg_utils.set_schedule(self)

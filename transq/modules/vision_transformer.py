@@ -1086,7 +1086,7 @@ class VisionTransformer(nn.Module):
 
         x_mask = torch.cat([torch.ones(x_mask.shape[0], 1).to(x_mask), x_mask], dim=1)
 
-        return x,pos_embed,(patch_index, (H, W))
+        return x,pos_embed,x_mask,(patch_index, (H, W))
     def visual_embed(self, _x, max_image_len=200, mask_it=False):
         _, _, ph, pw = self.patch_embed.proj.weight.shape
 
@@ -1431,7 +1431,7 @@ def _create_vision_transformer(variant, pretrained=False, distilled=False, **kwa
         # but I feel better than doing nothing by default for fine-tuning. Perhaps a better interface?
         _logger.warning("Removing representation layer for fine-tuning.")
         repr_size = None
-
+    
     model_cls = DistilledVisionTransformer if distilled else VisionTransformer
     model = model_cls(
         img_size=img_size,
@@ -1439,7 +1439,6 @@ def _create_vision_transformer(variant, pretrained=False, distilled=False, **kwa
         representation_size=repr_size,
         **kwargs,
     )
-    model.default_cfg = default_cfg
 
     if pretrained:
         load_pretrained(

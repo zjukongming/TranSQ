@@ -13,25 +13,23 @@ class Tokenizer(object):
         else:
             self.clean_report = self.clean_report_mimic_cxr
         self.ann = json.loads(open(self.ann_path, 'r').read())
-        self.path = "/fast-disk/kongming/Code/TranSQ-github/preprocess/train_label_mimic.txt"
-        self.txt = open(self.path,"r",errors='ignore').read()
         self.token2idx, self.idx2token = self.create_vocabulary()
 
     def create_vocabulary(self):
-        txt = self.txt.lower()
-        for ch in '!"#$&()*+,-./:;<=>?@[\\]^_{|}·~‘’':
-            txt = txt.replace(ch,"")
-        words = txt.split()
+        total_tokens = []
 
-        counter = Counter(words)
-        vocab = [k for k, v in counter.items()] + ['<unk>']+['<pad>']+['</s>']+['</e>']
+        for example in self.ann['train']:
+            tokens = self.clean_report(example['report']).split()
+            for token in tokens:
+                total_tokens.append(token)
+
+        counter = Counter(total_tokens)
+        vocab = [k for k, v in counter.items() if v >= self.threshold] + ['<unk>']
         vocab.sort()
-        #print(vocab)
         token2idx, idx2token = {}, {}
         for idx, token in enumerate(vocab):
-            token2idx[token] = idx
-            idx2token[idx] = token
-        #print(idx2token)
+            token2idx[token] = idx + 1
+            idx2token[idx + 1] = token
         return token2idx, idx2token
 
     def clean_report_iu_xray(self, report):
@@ -72,15 +70,11 @@ class Tokenizer(object):
         return len(self.token2idx)
 
     def __call__(self, report):
-        tokens = self.clean_report(report)
-        for ch in '!"#$&()*+,-./:;<=>?@[\\]^_{|}·~‘’':
-            tokens = tokens.replace(ch,"")
-        tokens = tokens.split()
-
+        tokens = self.clean_report(report).split()
         ids = []
         for token in tokens:
             ids.append(self.get_id_by_token(token))
-        ids =ids
+        ids = [0] + ids + [0]
         #print("token_call", ids)
         return ids
 
@@ -90,27 +84,7 @@ class Tokenizer(object):
             if idx > 0:
                 if i >= 1:
                     txt += ' '
-                txt += self.get_token_by_id(idx)
-            else:
-                break
-        return txt
-
-
-    def decode_txt(self, ids):
-        txt = ''
-        for i, idx in enumerate(ids):
-            if idx > 0:
-                if i >= 1:
-                    txt += ' '
-                cur_txt = self.get_token_by_id(idx)
-                
-                if cur_txt=="<pad>" or cur_txt=="</s>" :
-                    continue
-                elif cur_txt=="</e>":
-                    break
-                
-                txt = txt+cur_txt
-                
+                txt += self.idx2token[idx]
             else:
                 break
         return txt
@@ -118,5 +92,7 @@ class Tokenizer(object):
     def decode_batch(self, ids_batch):
         out = []
         for ids in ids_batch:
-            out.append(self.decode_txt(ids))
+            #print(ids)
+            #print(len(self.idx2token))
+            out.append(self.decode(ids))
         return out

@@ -134,7 +134,7 @@ class TransformerSQ_CNN(pl.LightningModule):
         self.res_features.add_module("conv_1x1",nn.Conv2d(2048, 768, kernel_size=(1, 1), stride=(1, 1), padding=(0, 0), bias=False))
         #self.load_state_dict(torch.load()['model'])
         if (self.hparams.config["load_path"] == "" and not self.hparams.config["test_only"]):
-            self.load_state_dict({k.replace('module.',''):v for k,v in torch.load('./pretrained-models/MedKLIP.pth')['model'].items()}, strict=False)
+            self.load_state_dict({k.replace('module.',''):v for k,v in torch.load('/fast-disk/kongming/Code/TranSQ-iuxray/pretrained-models/MedKLIP.pth')['model'].items()}, strict=False)
 
 
         """
@@ -259,74 +259,56 @@ class TransformerSQ_CNN(pl.LightningModule):
         src_idx = torch.cat([src for (src, _) in indices])
         return batch_idx, src_idx
 
-    def generate_ret_result(self, vis_embeds,sent_feats, semantic_feat,text_ids, indices, gt_indices, topic_preds, batch_size, device):
+    def generate_ret_result(self, sent_feats, text_ids, indices, gt_indices, topic_preds, batch_size, device):
         batch_indices, src_indices = indices
         gt_batch_indices, gt_src_indices = gt_indices
         sim_set = []
         sent_ret = []
         sent_targ = []
         topic_prob = []
-        retrieval_vec=torch.zeros(batch_size,50, 768)
-        retrieval_sent =torch.zeros(batch_size,1 )
         topic_prob_gt = []
         for i in range(batch_size):
-            sim_s = []
-            retrieval_vector = torch.zeros(50, 768)
             idx = src_indices[(batch_indices==i).nonzero().view(-1)]
             gt_idx = gt_src_indices[(gt_batch_indices==i).nonzero().view(-1)]
             #idx = self.idx_path_search(idx)
             #idx = self.idx_path_search_v2(sent_feats[i], idx, topic_preds[i])
-            #cur_semantic_feat = semantic_feat[i, gt_idx]
             sent_feat_t = sent_feats[i, idx]
-            #gt_sent_feat_t = sent_feats[i, gt_idx]
             topic_pred_t = topic_preds[i, idx].sigmoid().cpu().numpy()
             topic_gt_t = topic_preds[i, gt_idx].sigmoid().cpu().numpy()
             #print(idx)
             #print(sent_feat_t)
             sent_feat_t = F.normalize(sent_feat_t, dim=-1).cpu()
-            #gt_sent_feat_t = F.normalize(gt_sent_feat_t, dim=-1).cpu()
             #print(sent_feat_t.shape)
             sim = sent_feat_t @ self.sent_vects.transpose(1,0)
-            #gt_sim =gt_sent_feat_t @ self.sent_vects.transpose(1,0)
             #print(sim.shape)
-
             max_idx = torch.argmax(sim, dim=1).to(device)
-            #gt_max_idx = torch.argmax(gt_sim, dim=1).to(device)
-            #print(gt_max_idx.shape)
-            for j in range(len(max_idx)):
-                retrieval_vector[j,:]=torch.tensor(self.sent_vects[max_idx[j]])
+            #print(max_idx.shape)
+            sim_t=0
             sent_ret_t=""
-            
             for j in range(len(max_idx)):
                 #print(max_idx[j])
-                sim_s.append(sim[j][max_idx[j]].cpu().item())
+                sim_t += sim[j][max_idx[j]].cpu().item()
                 pred_sent_t = self.sentence_gallery[max_idx[j]]
                 pred_sent_t = pred_sent_t.strip(".")+" ."
                 sent_ret_t = sent_ret_t + pred_sent_t + " "
-            
-            sent_targ_t = self.tokenizer.decode_batch(text_ids[i, :, :].int().cpu().numpy())
+            sent_targ_t = self.tokenizer.decode_batch(text_ids[i, :, 1:].int().cpu().numpy())
             sent_targ_str = ""
-            for j in range(len(gt_idx)):
-                cur_sent = sent_targ_t[j]
-                if cur_sent!="":
-                    cur_sent = cur_sent.strip()
-                    sent_targ_str = sent_targ_str+cur_sent+" . "
+            for j in sent_targ_t:
+                if j!="":
+                    sent_targ_str = sent_targ_str+j+" "
             sent_ret_t = sent_ret_t.strip()
-            
             sent_targ_str = sent_targ_str.strip()
 
-            sent_ret_t = self.tokenizer.clean_report_mimic_cxr(sent_ret_t)
-            sent_targ_str = self.tokenizer.clean_report_mimic_cxr(sent_targ_str)
-            #print(len(retrieval_vector))
-            retrieval_vec[i,:,:] = retrieval_vector
-            #semantic_feats.append(cur_semantic_feat)
-            sim_set.append(sim_s)
+            sent_ret_t = self.tokenizer.clean_report_iu_xray(sent_ret_t)
+            sent_targ_str = self.tokenizer.clean_report_iu_xray(sent_targ_str)
+            
+            sim_set.append(sim_t/(len(max_idx)+1e-7))
             sent_ret.append(sent_ret_t)
             sent_targ.append(sent_targ_str)
-            topic_prob.append(((topic_pred_t, gt_idx), (topic_gt_t, gt_idx)))
+            topic_prob.append(((topic_pred_t, idx), (topic_gt_t, gt_idx)))
+            
         
-        
-        ret_result = [sent_ret, sent_targ,sim_set, topic_prob,semantic_feat,retrieval_vec,retrieval_sent]
+        ret_result = [sent_ret, sent_targ, sim_set, topic_prob]
         return ret_result
     
     def select_indices_v2(self, sent_feats, indices=None, indices_max=None, batch_size=64, device="cuda:0"):
@@ -462,45 +444,96 @@ class TransformerSQ_CNN(pl.LightningModule):
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         batch_size, sent_length, feat_dim = sent_embeds.size()
 
-         #image embedding
-        if image_embeds is None and image_masks is None:
-            img = batch["image"]
-            #print(img.size())
-            (
-                image_embeds,
-                pos_embeds,
-                image_masks,
-                patch_index,
-                image_labels,
-            ) = self.transformer.visual_embed(
-                img,
-                max_image_len=self.hparams.config["max_image_len"],
-                mask_it=mask_image,
-            )
-        else:
-            patch_index, image_labels = (
-                None,
-                None,
-            )
-
         ## Main      
         # Step 1: Visual Extractor:
         #print("step 1")
 
-        x=self.res_features(batch["image"])
-
-        vis_embeds = x
+        image1=batch["image"][:, 0]
+        image2=batch["image"][:, 1]
+        x1=self.res_features(image1)
+        x2=self.res_features(image2)
+        #print(x1.size())   [64, 768, 12, 12]
+        (
+            image1_embeds,
+            pos_embeds,
+            image1_masks,
+            patch_index
+        )=self.transformer.create_pos_embed_patch_index(
+            x1,
+            max_image_len=self.hparams.config["max_image_len"]
+        )
+        #print("image1_embeds",image1_embeds.size())        [64, 145, 768]
+        #print("pos_embeds",pos_embeds.size())              [64, 145, 768]
+        (
+            image2_embeds,
+            pos_embeds,
+            image2_masks,
+            patch_index
+        )=self.transformer.create_pos_embed_patch_index(
+            x2,
+            max_image_len=self.hparams.config["max_image_len"]
+        )
+        
+        image1_embeds, image2_embeds = (
+            image1_embeds + self.image_type_embedding(torch.zeros_like(image1_masks)),
+            image2_embeds
+            + self.image_type_embedding(
+                torch.full_like(image2_masks, image_token_type_idx)
+            ),
+        )
+        
+        vis_embeds1=image1_embeds
+        vis_embeds2=image2_embeds
+        vis_embeds=torch.cat((vis_embeds1, vis_embeds2), dim=1)
         semantic_query = self.semantic_query(torch.arange(self.semantic_query_num).to(device))
         x = semantic_query.repeat(batch_size, 1, 1)
         for i, blk in enumerate(self.transformer.blocks_topic):
-            x, _attn = blk(x, (vis_embeds+pos_embeds), (vis_embeds))
+            x, _attn = blk(x, torch.cat((vis_embeds1+0+pos_embeds, vis_embeds2+1+pos_embeds), dim=1), (vis_embeds))
         x = self.transformer.norm_sent(x)
-
-        semantic_feat = x
-
         sent_feats = self.topic_proj(x).float()
         topic_preds = self.topic_clas2(x).squeeze(-1)
 
+        # Step 2: Sentence Embedding Generation
+        #print("step 2")
+        
+        #semantic_query = self.semantic_query(torch.arange(self.semantic_query_num).to(device))
+        #x = semantic_query.repeat(batch_size, 1, 1)
+        #print(x.size())
+        #print(pos_embeds.size())
+        #print((vis_embeds+pos_embeds).size())
+        #for i, blk in enumerate(self.transformer.blocks_topic):
+            #x, _attn = blk(x, (vis_embeds+pos_embeds), (vis_embeds+pos_embeds))  
+            #x, _attn = blk(x, (vis_embeds+pos_embeds), (vis_embeds))
+            #x, _attn = blk(x, (vis_embeds), (vis_embeds))
+        
+        #x = self.transformer.norm_sent(x)
+        #sent_feats = self.topic_proj(x).float()
+        
+        #x = self.transformer.norm_sent(x)
+        #sent_feats = self.topic_proj(x).float()
+        
+        #print(sent_feats.shape)
+        #print(vis_embeds[:,0,:].unsqueeze(1).repeat(1,self.semantic_query_num,1).shape)
+        #topic_preds = self.topic_clas(torch.cat([sent_feats, vis_embeds[:,0,:].unsqueeze(1).repeat(1,self.semantic_query_num,1)], dim=2)).squeeze(-1)
+        
+        # Step 3: assignment of sent_feats prediction
+        #topic_preds = self.topic_clas(vis_embeds[:,0,:])        #(bs, 200) 
+
+        #classification_query = self.classification_query(torch.arange(self.semantic_query_num).to(device))
+        #x = classification_query.repeat(batch_size, 1, 1)
+        #x = sent_feats.clone()
+        """
+        for i, blk in enumerate(self.transformer.blocks_cls):
+            #x, _attn = blk(x, (vis_embeds+pos_embeds+type_embeds)[:,1:], (vis_embeds+pos_embeds+type_embeds)[:,1:])  
+            x, _attn = blk(x)  
+
+        x = self.transformer.norm_topic(x)
+        """
+        #topic_preds = self.topic_clas2(x).squeeze(-1)
+        
+
+        #print(topic_preds.shape)
+        
         match_idxs = self.matcher(sent_feats, topic_preds, sent_embeds, sent_num)
         #print(match_idxs)
         
@@ -555,7 +588,7 @@ class TransformerSQ_CNN(pl.LightningModule):
                 
             self.test_select_count = self.test_select_count+pos_count
 
-            ret_result = self.generate_ret_result(vis_embeds,sent_feats, semantic_feat, text_ids, pred_indices, indices, topic_preds, batch_size, device)
+            ret_result = self.generate_ret_result(sent_feats, text_ids, pred_indices, indices, topic_preds, batch_size, device)
 
         ret = {
             "ids": image_ids,
@@ -611,8 +644,8 @@ class TransformerSQ_CNN(pl.LightningModule):
 
     def save_ret_result(self, ret_result, ids=None, path=None, attn=None, patch=None):
         #print(path)
-        ret_result_zip = zip(ret_result[0], ret_result[1], ret_result[2], ret_result[3], ret_result[4],ret_result[5],ret_result[6],ret_result[7])
-        for idx, (sent_ret, sent_tar, s, tp,semantic_feat,retrieval_vec,retrieval_sent, bleu) in enumerate(ret_result_zip):
+        ret_result_zip = zip(ret_result[0], ret_result[1], ret_result[2], ret_result[3], ret_result[4])
+        for idx, (sent_ret, sent_tar, s, tp, bleu) in enumerate(ret_result_zip):
             self.ret_result_file.write("====\n")
             self.ret_result_file.write("pred: {}\n".format(sent_ret))
             self.ret_result_file.write("targ: {}\n".format(sent_tar))
@@ -723,4 +756,4 @@ class TransformerSQ_CNN(pl.LightningModule):
         return mrg_utils.set_schedule(self)
 
 if __name__=="main":
-    model = TransformerSQ_CNN()
+    model = TransformerSQ()

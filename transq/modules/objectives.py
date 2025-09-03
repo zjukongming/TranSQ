@@ -99,7 +99,6 @@ def compute_mimic(pl_module, batch):
         "attn": infer["attn"].cpu().detach().numpy(),
         "patch": infer["patch_index"],        
         "ids":  infer["ids"],
-        "ids":  infer["ids"],
         "loss": loss,
     }
     
@@ -129,7 +128,7 @@ def compute_mimic(pl_module, batch):
         bleu_set = []
         tar_set = []
         trans_set = []
-        for sent_ret, sent_tar in zip(ret_result[0],ret_result[1]):
+        for sent_ret, sent_tar, s in zip(ret_result[0],ret_result[1],ret_result[2]):
             #print("===")
             #print("target:", sent_tar)
             #print("pred:", sent_ret)
@@ -151,19 +150,21 @@ def compute_mimic(pl_module, batch):
             if "" in tar_list:
                 tar_list = tar_list.remove("")
             """
-
+            
             bleu_1 = getattr(pl_module, f"{phase}_mimic_bleu1")(trans, ref).cpu().numpy() 
             bleu_2 = getattr(pl_module, f"{phase}_mimic_bleu2")(trans, ref).cpu().numpy()   
             bleu_3 = getattr(pl_module, f"{phase}_mimic_bleu3")(trans, ref).cpu().numpy()   
             bleu_4 = getattr(pl_module, f"{phase}_mimic_bleu4")(trans, ref).cpu().numpy()
-
+            
             #bleu_1, bleu_2, bleu_3, bleu_4 = 0,0,0,0
             bleu_set.append([bleu_1, bleu_2, bleu_3, bleu_4])
             #print(bleu_1.cpu().numpy(),bleu_2.cpu().numpy(bleu_set),bleu_3.cpu().numpy(),bleu_4.cpu().numpy())   
             #print(bleu_1,bleu_2,bleu_3,bleu_4)
 
+            pl_module.log(f"mimic/{phase}/score", s)  
+
         scores = getattr(pl_module, f"{phase}_mimic_mrg_score")(trans_set, tar_set)
-        ret_result = [ret_result[0],ret_result[1],ret_result[2],ret_result[3],ret_result[4],ret_result[5],ret_result[6],bleu_set]
+        ret_result = [ret_result[0],ret_result[1],ret_result[2],ret_result[3],bleu_set]
         
     else:
         ret_result = None         
