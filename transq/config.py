@@ -2,6 +2,7 @@ from sacred import Experiment
 
 ex = Experiment("TranSQ")
 
+
 def _loss_names(d):
     ret = {
         "itm": 0,
@@ -11,17 +12,20 @@ def _loss_names(d):
         "nlvr2": 0,
         "irtr": 0,
         "mimic": 0,
+        "iuxray": 0,
     }
 
     ret.update(d)
     return ret
 
-
 @ex.config
 def config():
     exp_name = "vilt"
     seed = 0
-    batch_size = 64  # this is a desired batch size; pl trainer will accumulate gradients when per step batch is smaller.
+    #datasets = ["mimic"]
+    datasets = ["coco", "vg", "sbu", "gcc"]
+    loss_names = _loss_names({"itm": 1, "mlm": 1})
+    batch_size = 4096  # this is a desired batch size; pl trainer will accumulate gradients when per step batch is smaller.
 
     # Image setting
     #train_transform_keys = ["pixelbert"]
@@ -40,7 +44,7 @@ def config():
     max_sent_num = 25
     sent_emb = 768
     tokenizer = "bert-base-uncased"
-    semantic_query_num = 50
+    semantic_query_num = 25
     whole_word_masking = False
     mlm_prob = 0.15
     draw_false_text = 0
@@ -84,61 +88,58 @@ def config():
     num_nodes = 1
     pre_data_path = ""
     
-    load_path ="./model/TranSQ-mimic.ckpt"
+    #load_path = "/fast-disk/kongming/Code/TranSQ-iuxray/result/train_iuxray_randaug_seed0_from_/version_3/checkpoints/epoch=15-step=511.ckpt"
+    load_path ="/fast-disk/kongming/Code/TranSQ-iuxray/result/train_vit_base/version_0/checkpoints/epoch=19-step=639.ckpt"
 
-    num_workers = 0
+    num_workers = 2
     precision = 16
     backbone="ViT"
-    #gpt_path = "/fast-disk/kongming/Code/test/result/mimic_memory/gen/best_model.ckpt"
 
 
 # Named configs for "environment" which define gpus and nodes, and paths@ex.named_config
 @ex.named_config
-def task_train_mimic():
-    exp_name = "train_mimic_vit"
-    datasets = ["mimic"]
+def task_train_iuxray():
+    exp_name = "train_vit"
+    datasets = ["iuxray"]
     train_transform_keys = ["pixelbert_randaug"]
-    #loss_names = _loss_names({"mimic": 1})
-    loss_names = _loss_names({"mimic": 1})
+    loss_names = _loss_names({"iuxray": 1})
     batch_size = 64
     max_image_len = 300
-    max_epoch = 20
+    max_epoch = 50
     max_steps = None
     warmup_steps = 0.02
     get_recall_metric = False
     draw_false_text = 15
     learning_rate = 1e-4
-    data_root = "/big-disk/mimic_cxr"
-    pre_data_path = "/fast-disk/TranSQ/preprocess/data"
+    data_root = "/big-disk/kongming/TranSQ/iu_xray"
+    pre_data_path = "/fast-disk/kongming/Code/TranSQ-iuxray/preprocess/data"
     num_gpus = 1
     per_gpu_batchsize = 64
     val_check_interval = 1.0
     backbone="ViT"
 
 @ex.named_config
-def task_train_mimic_cnn():
-    exp_name = "train_mimic_cnn"
-    datasets = ["mimic"]
+def task_train_iuxray_CNN():
+    exp_name = "train_pretrained_resnet"
+    datasets = ["iuxray"]
     train_transform_keys = ["pixelbert_randaug"]
-    #loss_names = _loss_names({"mimic": 1})
-    loss_names = _loss_names({"mimic": 1})
+    loss_names = _loss_names({"iuxray": 1})
     batch_size = 64
     max_image_len = 300
     vis_feature_size=12
-    max_epoch = 20
+    max_epoch = 100
     max_steps = None
     warmup_steps = 0.02
     patch_size = 12
     get_recall_metric = False
     draw_false_text = 15
     learning_rate = 1e-4
-    data_root = "/big-disk/mimic_cxr"
-    pre_data_path = "/fast-disk/TranSQ/preprocess/data"
+    data_root = "/big-disk/kongming/TranSQ/iu_xray"
+    pre_data_path = "/fast-disk/kongming/Code/TranSQ-iuxray/preprocess/data"
     num_gpus = 1
     per_gpu_batchsize = 64
     val_check_interval = 1.0
     backbone="CNN"
-
 
 # Named configs for "etc" which are orthogonal to "env" and "task", need to be added at the end
 
